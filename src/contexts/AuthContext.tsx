@@ -68,24 +68,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 800));
+      // For demo purposes, check if we're using mock users
+      const mockUser = mockUsers.find(u => u.email === email && password === 'password123');
       
-      // Find user with matching email
-      const foundUser = mockUsers.find(u => u.email === email);
-      
-      if (!foundUser) {
-        throw new Error('Invalid email or password');
+      if (mockUser) {
+        // Create a mock token
+        const token = `mock_token_${mockUser.id}`;
+        
+        // Set user and token in localStorage
+        setUser(mockUser);
+        localStorage.setItem('user', JSON.stringify(mockUser));
+        localStorage.setItem('token', token);
+        return;
       }
       
-      // In a real app, you would validate the password here
-      if (password.length < 6) {
-        throw new Error('Invalid email or password');
+      // Real API call
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Login failed');
       }
-      
-      // Set user and store in localStorage
-      setUser(foundUser);
-      localStorage.setItem('user', JSON.stringify(foundUser));
+
+      // Set user and token in localStorage
+      setUser(data.user);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('token', data.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -99,14 +114,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('user');
   };
 
-  // Function to switch between roles (for demo purposes)
+  // Remove demo role-switching function
+  /*
   const setActiveRole = (role: UserRole) => {
     if (!user) return;
     
-    const newUser = { ...user, role };
-    setUser(newUser);
-    localStorage.setItem('user', JSON.stringify(newUser));
+    setUser({ ...user, role });
+    localStorage.setItem(
+      'user', 
+      JSON.stringify({ ...user, role })
+    );
   };
+  */
 
   const value = {
     user,

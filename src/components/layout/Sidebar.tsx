@@ -61,7 +61,7 @@ const Sidebar = ({ isMobileOpen, setIsMobileOpen }: SidebarProps) => {
       items.push(
         { to: '/dealers', icon: <Users size={20} />, label: 'Dealers' },
         { to: '/contests', icon: <Trophy size={20} />, label: 'Contests' },
-        { to: '/analytics', icon: <BarChart3 size={20} />, label: 'Analytics' }
+        { to: '/sales', icon: <BarChart3 size={20} />, label: 'Sales' }
       );
     } else if (user?.role === 'dealer') {
       items.push(

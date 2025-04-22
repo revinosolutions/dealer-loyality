@@ -160,19 +160,41 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     activeContests: 0,
     pendingRewards: 0,
     salesGrowth: 0,
-    pointsGrowth:.0,
+    pointsGrowth: 0,
   });
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Get auth token
+  const getAuthToken = () => localStorage.getItem('token');
+
+  // API request helper
+  const apiRequest = async (endpoint: string) => {
+    const token = getAuthToken();
+    if (!token) throw new Error('Authentication required');
+
+    const response = await fetch(`http://localhost:5000/api${endpoint}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch data');
+    }
+
+    return response.json();
+  };
 
   // Fetch contests
   const fetchContests = async () => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setContests(mockContests);
+      const data = await apiRequest('/contests');
+      setContests(data);
     } catch (error) {
       console.error('Error fetching contests:', error);
+      // Fallback to mock data if API fails
+      setContests(mockContests);
     } finally {
       setLoading(false);
     }
@@ -182,11 +204,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchLeaders = async () => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setLeaders(mockLeaders);
+      const data = await apiRequest('/stats/leaderboard');
+      setLeaders(data);
     } catch (error) {
       console.error('Error fetching leaders:', error);
+      // Fallback to mock data if API fails
+      setLeaders(mockLeaders);
     } finally {
       setLoading(false);
     }
@@ -196,11 +219,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchSalesData = async () => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setSalesData(mockSalesData);
+      const daily = await apiRequest('/sales/data?period=daily');
+      const weekly = await apiRequest('/sales/data?period=weekly');
+      const monthly = await apiRequest('/sales/data?period=monthly');
+      
+      setSalesData({
+        daily,
+        weekly,
+        monthly
+      });
     } catch (error) {
       console.error('Error fetching sales data:', error);
+      // Fallback to mock data if API fails
+      setSalesData(mockSalesData);
     } finally {
       setLoading(false);
     }
@@ -210,11 +241,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchStats = async () => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setStats(mockStats);
+      const data = await apiRequest('/stats');
+      setStats(data);
     } catch (error) {
       console.error('Error fetching stats:', error);
+      // Fallback to mock data if API fails
+      setStats(mockStats);
     } finally {
       setLoading(false);
     }
@@ -223,14 +255,33 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Load initial data
   useEffect(() => {
     const loadData = async () => {
-      await Promise.all([
-        fetchContests(),
-        fetchLeaders(),
-        fetchSalesData(),
-        fetchStats(),
-      ]);
+      try {
+        // Check if user is authenticated
+        const token = getAuthToken();
+        if (!token) {
+          setLoading(false);
+          return;
+        }
+        
+        // Load all data in parallel
+        await Promise.all([
+          fetchContests(),
+          fetchLeaders(),
+          fetchSalesData(),
+          fetchStats()
+        ]);
+      } catch (error) {
+        console.error('Error loading initial data:', error);
+        // Fallback to mock data
+        setContests(mockContests);
+        setLeaders(mockLeaders);
+        setSalesData(mockSalesData);
+        setStats(mockStats);
+      } finally {
+        setLoading(false);
+      }
     };
-
+    
     loadData();
   }, []);
 
