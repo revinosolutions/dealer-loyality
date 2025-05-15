@@ -1,24 +1,62 @@
-export default {
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+// MongoDB configuration
+const mongodbURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/dealer-loyalty';
+
+const config = {
   // Server configuration
-  port: process.env.PORT || 5000,
-  nodeEnv: process.env.NODE_ENV || 'development',
+  server: {
+    port: process.env.PORT || 5000,
+    nodeEnv: process.env.NODE_ENV || 'development',
+    frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173'
+  },
 
   // MongoDB configuration
   mongodb: {
-    uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/dealer-loyalty',
+    uri: mongodbURI,
     options: {
       useNewUrlParser: true,
-      useUnifiedTopology: true,
+      useUnifiedTopology: true
     }
   },
 
   // JWT configuration
-  jwtSecret: process.env.JWT_SECRET || 'your-secret-key',
-  jwtExpiresIn: '24h',
+  jwt: {
+    secret: process.env.JWT_SECRET || 'dealer-loyalty-secret-key',
+    refreshSecret: process.env.JWT_REFRESH_SECRET || 'dealer-loyalty-refresh-secret',
+    accessExpiration: process.env.JWT_ACCESS_EXPIRATION || '1h',
+    refreshExpiration: process.env.JWT_REFRESH_EXPIRATION || '7d'
+  },
+
+  // Platform configuration
+  platform: {
+    name: 'Dealer Loyalty Platform',
+    version: '1.0.0',
+    supportEmail: 'support@dealer-loyalty.com'
+  },
+
+  // File upload configuration
+  uploads: {
+    avatarDir: process.env.AVATAR_UPLOAD_DIR || 'uploads/avatars',
+    productImageDir: process.env.PRODUCT_UPLOAD_DIR || 'uploads/products',
+    maxFileSize: 5 * 1024 * 1024 // 5MB
+  },
+
+  // Points configuration
+  points: {
+    expiryDays: 365, // Points expire after 1 year
+    salesMultiplier: 0.01, // 1 point per $100 of sales
+    defaultRewardPointCost: 100 // Default points cost for rewards
+  },
 
   // CORS configuration
   corsOptions: {
-    origin: process.env.FRONTEND_URL,
+    origin: process.env.NODE_ENV === 'production'
+      ? [process.env.FRONTEND_URL || 'https://yourproductiondomain.com']
+      : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
   },
 
@@ -34,8 +72,19 @@ export default {
     contests: '/api/contests',
     sales: '/api/sales',
     stats: '/api/stats',
+    rewards: '/api/rewards',
+    notifications: '/api/notifications',
+    achievements: '/api/achievements',
+    whatsapp: '/api/whatsapp',
+    insights: '/api/insights',
+    clients: '/api/clients',
+    products: '/api/products',
+    inventory: '/api/inventory',
+    orders: '/api/orders',
   },
 };
+
+export default config;
 
 
 

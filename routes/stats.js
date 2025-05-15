@@ -2,12 +2,15 @@ import express from 'express';
 import Sales from '../models/Sales.js';
 import Contest from '../models/Contest.js';
 import User from '../models/User.js';
-import { authenticateToken } from '../middleware/auth.js';
+import Order from '../models/Order.js';
+import Product from '../models/Product.js';
+import Organization from '../models/Organization.js';
+import { authMiddleware, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Get dashboard statistics
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
     // Build query based on user role
     let salesQuery = {};
@@ -116,7 +119,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Get leaderboard data
-router.get('/leaderboard', authenticateToken, async (req, res) => {
+router.get('/leaderboard', authMiddleware, async (req, res) => {
   try {
     // Build query based on user role
     let query = {};
@@ -151,6 +154,150 @@ router.get('/leaderboard', authenticateToken, async (req, res) => {
     res.json(formattedLeaders);
   } catch (error) {
     console.error('Leaderboard error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get organization statistics
+router.get('/organization/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check user authorization
+    if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied. Admin only endpoint.' });
+    }
+    
+    // If admin, validate they are from this organization
+    if (req.user.role === 'admin' && req.user.organization?._id?.toString() !== id) {
+      return res.status(403).json({ message: 'Access denied. You can only view your own organization.' });
+    }
+    
+    // Get organization details
+    const organization = await Organization.findById(id);
+    if (!organization) {
+      return res.status(404).json({ message: 'Organization not found' });
+    }
+    
+    // Get user counts for this organization
+    const [adminCount, clientCount, dealerCount] = await Promise.all([
+      User.countDocuments({ role: 'admin', 'organization._id': id }),
+      User.countDocuments({ role: 'client', 'organization._id': id }),
+      User.countDocuments({ role: 'dealer', 'organization._id': id })
+    ]);
+    
+    // Get active users (logged in within last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const [activeClientCount, activeDealerCount] = await Promise.all([
+      User.countDocuments({ 
+        role: 'client', 
+        'organization._id': id,
+        lastLogin: { $gte: thirtyDaysAgo }
+      }),
+      User.countDocuments({ 
+        role: 'dealer', 
+        'organization._id': id,
+        lastLogin: { $gte: thirtyDaysAgo }
+      })
+    ]);
+    
+    // Get order statistics
+    const orderStats = await Order.aggregate([
+      { $match: { 'organization._id': id } },
+      { $group: { 
+        _id: '$status', 
+        count: { $sum: 1 },
+        total: { $sum: '$total' }
+      }}
+    ]);
+    
+    const orderTotals = {
+      pending: 0,
+      processing: 0,
+      shipped: 0,
+      delivered: 0,
+      canceled: 0,
+      total: 0,
+      value: 0
+    };
+    
+    orderStats.forEach(stat => {
+      if (orderTotals.hasOwnProperty(stat._id)) {
+        orderTotals[stat._id] = stat.count;
+        orderTotals.value += stat.total;
+      }
+      orderTotals.total += stat.count;
+    });
+    
+    // Get sales data for past 6 months
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    
+    const monthlySales = await Sales.aggregate([
+      { 
+        $match: { 
+          'organization._id': id,
+          date: { $gte: sixMonthsAgo }
+        } 
+      },
+      {
+        $group: {
+          _id: { 
+            year: { $year: '$date' }, 
+            month: { $month: '$date' } 
+          },
+          total: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+    
+    // Format monthly sales data
+    const salesByMonth = [];
+    const currentDate = new Date();
+    
+    for (let i = 0; i < 6; i++) {
+      const date = new Date(currentDate);
+      date.setMonth(date.getMonth() - i);
+      
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      
+      const existing = monthlySales.find(s => 
+        s._id.year === year && s._id.month === month
+      );
+      
+      salesByMonth.unshift({
+        month: date.toLocaleString('default', { month: 'short' }),
+        year,
+        total: existing ? existing.total : 0,
+        count: existing ? existing.count : 0
+      });
+    }
+    
+    // Return organization statistics
+    res.json({
+      organization: {
+        name: organization.name,
+        status: organization.status,
+        description: organization.description,
+        createdAt: organization.createdAt
+      },
+      userCounts: {
+        admin: adminCount,
+        client: clientCount,
+        dealer: dealerCount,
+        activeClients: activeClientCount,
+        activeDealers: activeDealerCount
+      },
+      orders: orderTotals,
+      salesByMonth
+    });
+  } catch (error) {
+    console.error('Organization stats error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });

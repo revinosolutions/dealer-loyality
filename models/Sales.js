@@ -1,7 +1,12 @@
 import mongoose from 'mongoose';
 
 const salesSchema = new mongoose.Schema({
-  userId: {
+  orderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order',
+    required: true
+  },
+  dealerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
@@ -9,15 +14,31 @@ const salesSchema = new mongoose.Schema({
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: function() {
-      return this.userRole === 'dealer';
-    }
-  },
-  userRole: {
-    type: String,
-    enum: ['client', 'dealer'],
     required: true
   },
+  products: [{
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      required: true
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: 0
+    },
+    lineTotal: {
+      type: Number,
+      required: true,
+      min: 0
+    },
+    category: String
+  }],
   amount: {
     type: Number,
     required: true,
@@ -28,19 +49,28 @@ const salesSchema = new mongoose.Schema({
     required: true,
     default: Date.now
   },
-  type: {
-    type: String,
-    required: true,
-    trim: true
+  region: String,
+  location: {
+    city: String,
+    state: String,
+    country: String
+  },
+  pointsAwarded: {
+    type: Number,
+    default: 0
+  },
+  contestId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Contest'
+  },
+  isContestEligible: {
+    type: Boolean,
+    default: true
   },
   status: {
     type: String,
-    enum: ['pending', 'completed', 'cancelled'],
+    enum: ['completed', 'cancelled', 'returned', 'partial_return'],
     default: 'completed'
-  },
-  points: {
-    type: Number,
-    default: 0
   },
   metadata: {
     type: Map,
@@ -56,16 +86,109 @@ const salesSchema = new mongoose.Schema({
   }
 });
 
-// Update timestamps
+// Update the updatedAt field on save
 salesSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
 
-// Index for efficient querying
-salesSchema.index({ userId: 1, date: -1 });
+// Create indexes for faster queries
+salesSchema.index({ dealerId: 1, date: -1 });
 salesSchema.index({ clientId: 1, date: -1 });
+salesSchema.index({ 'products.productId': 1 });
+salesSchema.index({ contestId: 1 });
 
+// Static method to get sales by dealer
+salesSchema.statics.getByDealer = async function(dealerId, options = {}) {
+  const query = { dealerId };
+  
+  if (options.startDate && options.endDate) {
+    query.date = {
+      $gte: new Date(options.startDate),
+      $lte: new Date(options.endDate)
+    };
+  }
+  
+  if (options.status) {
+    query.status = options.status;
+  }
+  
+  return this.find(query)
+    .sort({ date: -1 })
+    .populate('orderId', 'orderNumber')
+    .populate('products.productId', 'name category')
+    .exec();
+};
+
+// Static method to get sales by client
+salesSchema.statics.getByClient = async function(clientId, options = {}) {
+  const query = { clientId };
+  
+  if (options.startDate && options.endDate) {
+    query.date = {
+      $gte: new Date(options.startDate),
+      $lte: new Date(options.endDate)
+    };
+  }
+  
+  if (options.status) {
+    query.status = options.status;
+  }
+  
+  return this.find(query)
+    .sort({ date: -1 })
+    .populate('dealerId', 'name email')
+    .populate('orderId', 'orderNumber')
+    .exec();
+};
+
+// Static method to get sales by contest
+salesSchema.statics.getByContest = async function(contestId) {
+  return this.find({ contestId, isContestEligible: true })
+    .sort({ date: -1 })
+    .populate('dealerId', 'name email')
+    .populate('products.productId', 'name category')
+    .exec();
+};
+
+// Static method to get sales metrics
+salesSchema.statics.getMetrics = async function(options = {}) {
+  const query = {};
+  
+  if (options.dealerId) {
+    query.dealerId = options.dealerId;
+  }
+  
+  if (options.clientId) {
+    query.clientId = options.clientId;
+  }
+  
+  if (options.startDate && options.endDate) {
+    query.date = {
+      $gte: new Date(options.startDate),
+      $lte: new Date(options.endDate)
+    };
+  }
+  
+  // Only include completed sales
+  query.status = 'completed';
+  
+  // Aggregation for sales metrics
+  return this.aggregate([
+    { $match: query },
+    {
+      $group: {
+        _id: null,
+        totalSales: { $sum: '$amount' },
+        count: { $sum: 1 },
+        avgSale: { $avg: '$amount' },
+        productsSold: { $sum: { $size: '$products' } }
+      }
+    }
+  ]);
+};
+
+// Create a model from the schema
 const Sales = mongoose.model('Sales', salesSchema);
 
 export default Sales;

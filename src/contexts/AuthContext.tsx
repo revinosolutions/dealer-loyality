@@ -1,151 +1,295 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import authService, { User as AuthUser, LoginData, RegisterData, ProfileUpdateData } from '../services/authService';
 
 // Define user roles
-export type UserRole = 'super_admin' | 'client' | 'dealer';
+// superadmin: Platform owner (Revino) who manages all manufacturers/admins
+// admin: Manufacturer (produces and sells products to clients)
+// client: Bulk buyers (purchase from manufacturer and sell to dealers)
+// dealer: Retailers (purchase from clients and sell to end consumers)
+type UserRole = 'superadmin' | 'admin' | 'client' | 'dealer';
 
 // Define user type
-export type User = {
+interface User {
   id: string;
+  _id?: string; // MongoDB ID field
   name: string;
   email: string;
   role: UserRole;
+  points: number;
   avatar?: string;
+  phone?: string;
+  status: 'active' | 'inactive' | 'suspended';
+  organization?: {
+    id: string;
+    name: string;
+    status?: 'active' | 'inactive' | 'suspended';
+    description?: string;
+    logo?: string;
+    contactInfo?: any;
+    createdAt?: string;
+    settings?: {
+      theme?: {
+        primaryColor?: string;
+        secondaryColor?: string;
+        logoUrl?: string;
+      };
+    };
+  };
+  // ... other existing fields
+}
+
+// Helper function to convert API user to our internal format
+const convertAuthUser = (apiUser: AuthUser): User => {
+  // Ensure status is a valid value
+  let status: 'active' | 'inactive' | 'suspended' = 'active';
+  if (apiUser.status === 'inactive' || apiUser.status === 'suspended') {
+    status = apiUser.status;
+  }
+
+  // Preserve _id if it exists, for MongoDB compatibility
+  return {
+    id: apiUser.id,
+    _id: (apiUser as any)._id, // Preserve MongoDB _id if available
+    name: apiUser.name,
+    email: apiUser.email,
+    role: apiUser.role as UserRole,
+    points: apiUser.points || 0,
+    avatar: apiUser.avatar,
+    phone: apiUser.phone,
+    status,
+    organization: apiUser.organization,
+    // ... map other fields
+  };
 };
 
-// Define auth context type
-type AuthContextType = {
+interface AuthContextType {
   user: User | null;
-  loading: boolean;
+  token: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (data: LoginData) => Promise<void>;
+  register: (data: RegisterData) => Promise<void>;
   logout: () => void;
-  setActiveRole: (role: UserRole) => void;
+  updateProfile: (data: ProfileUpdateData) => Promise<void>;
+  clearError: () => void;
+  getUsers: (role?: UserRole) => Promise<User[]>;
+  updateUser: (id: string, data: any) => Promise<User>;
+}
+
+// Create context with default values
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  token: null,
+  isAuthenticated: false,
+  isLoading: true,
+  error: null,
+  login: async () => {},
+  register: async () => {},
+  logout: () => {},
+  updateProfile: async () => {},
+  clearError: () => {},
+  getUsers: async () => [],
+  updateUser: async () => ({ id: '', name: '', email: '', role: 'dealer', points: 0, avatar: '', status: 'active' })
+});
+
+export const useAuth = () => useContext(AuthContext);
+
+// Force redirect to a specific path
+const forceRedirect = (path: string) => {
+  setTimeout(() => {
+    window.location.href = path;
+  }, 100);
 };
 
-// Create the auth context
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Mock users for demo
-const mockUsers: User[] = [
-  {
-    id: '1',
-    name: 'Admin User',
-    email: 'admin@revino.com',
-    role: 'super_admin',
-  },
-  {
-    id: '2',
-    name: 'Client User',
-    email: 'client@example.com',
-    role: 'client',
-  },
-  {
-    id: '3',
-    name: 'Dealer User',
-    email: 'dealer@example.com',
-    role: 'dealer',
-  },
-];
-
-// Create auth provider
+// Provider component
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Check for existing session on mount
+  
+  // Check for existing auth on mount
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    setLoading(false);
+    const initAuth = async () => {
+      setIsLoading(true);
+      
+      try {
+        // Check if we have a stored token and user
+        if (authService.isAuthenticated()) {
+          // Get the stored token
+          const storedToken = localStorage.getItem('token');
+          setToken(storedToken);
+          
+          const storedUser = authService.getStoredUser();
+          
+          if (storedUser) {
+            setUser(convertAuthUser(storedUser));
+            // Optionally refresh user data from server
+            try {
+              const freshUser = await authService.getCurrentUser();
+              setUser(convertAuthUser(freshUser));
+            } catch (refreshError) {
+              console.error('Error refreshing user data:', refreshError);
+              // Continue with stored user data
+            }
+          } else {
+            // We have a token but no user, try to get current user
+            const currentUser = await authService.getCurrentUser();
+            setUser(convertAuthUser(currentUser));
+          }
+        }
+      } catch (err) {
+        console.error('Auth initialization error:', err);
+        authService.logout();
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initAuth();
   }, []);
 
-  // Login function
-  const login = async (email: string, password: string) => {
-    setLoading(true);
+  const login = async (data: LoginData) => {
+    setIsLoading(true);
     setError(null);
     
     try {
-      // For demo purposes, check if we're using mock users
-      const mockUser = mockUsers.find(u => u.email === email && password === 'password123');
+      console.log('Attempting login with:', { email: data.email });
+      const response = await authService.login(data);
       
-      if (mockUser) {
-        // Create a mock token
-        const token = `mock_token_${mockUser.id}`;
-        
-        // Set user and token in localStorage
-        setUser(mockUser);
-        localStorage.setItem('user', JSON.stringify(mockUser));
-        localStorage.setItem('token', token);
-        return;
+      console.log('Login successful:', response);
+      
+      // Explicitly set token and user in state
+      setUser(convertAuthUser(response.user));
+      setToken(response.token);
+      
+      // Double-check token is in localStorage
+      const storedToken = localStorage.getItem('token');
+      if (storedToken) {
+        console.log('Token confirmed in localStorage:', storedToken.substring(0, 15) + '...');
+      } else {
+        console.error('Token not found in localStorage after login');
+        localStorage.setItem('token', response.token);
+        console.log('Re-saved token to localStorage');
       }
       
-      // Real API call
-      const response = await fetch('http://localhost:5000/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Login failed');
-      }
-
-      // Set user and token in localStorage
-      setUser(data.user);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      localStorage.setItem('token', data.token);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      // Force redirect to dashboard
+      console.log('Login successful, redirecting to dashboard...');
+      forceRedirect('/dashboard');
+    } catch (err: any) {
+      console.error('Login error:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Login failed. Please try again.';
+      setError(errorMessage);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  // Logout function
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('user');
-  };
-
-  // Remove demo role-switching function
-  /*
-  const setActiveRole = (role: UserRole) => {
-    if (!user) return;
+  const register = async (data: RegisterData) => {
+    setIsLoading(true);
+    setError(null);
     
-    setUser({ ...user, role });
-    localStorage.setItem(
-      'user', 
-      JSON.stringify({ ...user, role })
-    );
+    try {
+      const response = await authService.register(data);
+      setUser(convertAuthUser(response.user));
+      setToken(response.token);
+      
+      // Force redirect to dashboard
+      forceRedirect('/dashboard');
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.message || 'Registration failed. Please try again.';
+      setError(errorMessage);
+      console.error('Register error:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
-  */
 
-  const value = {
+  const logout = () => {
+    authService.logout();
+    setUser(null);
+    setToken(null);
+    forceRedirect('/login');
+  };
+
+  const updateProfile = async (data: ProfileUpdateData) => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const updatedUser = await authService.updateProfile(data);
+      setUser(convertAuthUser(updatedUser));
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.message || 'Failed to update profile. Please try again.';
+      setError(errorMessage);
+      console.error('Profile update error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const clearError = () => {
+    setError(null);
+  };
+
+  // Get users filtered by role
+  const getUsers = async (role?: UserRole): Promise<User[]> => {
+    try {
+      // Use real data from the API now
+      if (role === 'client') {
+        const clients = await authService.getClients();
+        return clients as User[];
+      } else if (role === 'dealer') {
+        const dealers = await authService.getDealers();
+        return dealers as User[];
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      return [];
+    }
+  };
+
+  // Update user
+  const updateUser = async (id: string, data: any): Promise<User> => {
+    try {
+      // Use the real API call
+      const updatedUser = await authService.updateUser(id, data);
+      
+      if (user && id === user.id) {
+        // If updating the current user, update the local state
+        setUser(convertAuthUser(updatedUser));
+      }
+      
+      return convertAuthUser(updatedUser);
+    } catch (error) {
+      console.error('Error updating user:', error);
+      throw error;
+    }
+  };
+
+  const authContextValue = {
     user,
-    loading,
+    token,
+    isAuthenticated: !!user,
+    isLoading,
     error,
     login,
+    register,
     logout,
-    setActiveRole,
+    updateProfile,
+    clearError,
+    getUsers,
+    updateUser
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
-
-// Create hook for using auth context
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  return (
+    <AuthContext.Provider value={authContextValue}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export default AuthContext;

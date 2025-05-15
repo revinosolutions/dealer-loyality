@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { PlusCircle, Search, Filter, Trophy, Calendar, ChevronDown } from 'lucide-react';
-import Layout from '../components/layout/Layout';
 import ContestCard from '../components/dashboard/ContestCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
@@ -12,6 +11,16 @@ const ContestsPage = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('startDate');
   const [showFilters, setShowFilters] = useState(false);
+  
+  // Ensure only admin and dealer roles can access this page
+  if (user?.role !== 'admin' && user?.role !== 'dealer') {
+    return (
+      <div className="p-6 bg-white rounded-lg shadow">
+        <h2 className="text-xl font-semibold text-red-600">Access Denied</h2>
+        <p className="mt-2">You do not have permission to view this page.</p>
+      </div>
+    );
+  }
   
   // Filter and sort contests
   const filteredContests = contests
@@ -47,8 +56,7 @@ const ContestsPage = () => {
     });
 
   return (
-    <Layout title="Contests">
-      <div className="space-y-6">
+    <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -60,7 +68,7 @@ const ContestsPage = () => {
             </p>
           </div>
           
-          {(user?.role === 'super_admin' || user?.role === 'client') && (
+          {(user?.role === 'admin' || user?.role === 'client') && (
             <a 
               href="/contests/new"
               className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
@@ -212,7 +220,7 @@ const ContestsPage = () => {
                 "You haven't created any contests yet. Create your first contest to get started."
               )}
             </p>
-            {(user?.role === 'super_admin' || user?.role === 'client') && !searchTerm && statusFilter === 'all' && (
+            {(user?.role === 'admin' || user?.role === 'client') && !searchTerm && statusFilter === 'all' && (
               <a 
                 href="/contests/new" 
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
@@ -224,7 +232,6 @@ const ContestsPage = () => {
           </div>
         )}
       </div>
-    </Layout>
   );
 };
 

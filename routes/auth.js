@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
 import User from '../models/User.js';
 import config from '../server/config.js';
+import { authMiddleware, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -19,7 +20,8 @@ const validateRegister = [
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters long'),
   body('role')
-    .isIn(['super_admin', 'client', 'dealer'])
+    .optional()
+    .isIn(['admin', 'client', 'dealer'])
     .withMessage('Invalid role specified'),
 ];
 
@@ -38,10 +40,11 @@ router.post('/login', validateLogin, async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    // Ensure consistent token format with payload containing 'id'
     const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn }
+      { id: user._id, role: user.role },
+      config.jwt.secret,
+      { expiresIn: config.jwt.accessExpiration }
     );
 
     res.json({
@@ -51,6 +54,12 @@ router.post('/login', validateLogin, async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        points: user.points,
+        avatar: user.avatar,
+        phone: user.phone,
+        clientId: user.clientId,
+        notificationPreferences: user.notificationPreferences,
+        stats: user.stats
       },
     });
   } catch (error) {
@@ -67,7 +76,7 @@ router.post('/register', validateRegister, async (req, res) => {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { name, email, password, role, clientId } = req.body;
+    const { name, email, password, role, clientId, phone } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
@@ -80,16 +89,18 @@ router.post('/register', validateRegister, async (req, res) => {
       name,
       email,
       password,
-      role,
+      role: role || 'dealer',
       clientId: role === 'dealer' ? clientId : undefined,
+      phone,
     });
 
     await user.save();
 
+    // Use the same token format as login
     const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn }
+      { id: user._id, role: user.role },
+      config.jwt.secret,
+      { expiresIn: config.jwt.accessExpiration }
     );
 
     res.status(201).json({
@@ -99,6 +110,12 @@ router.post('/register', validateRegister, async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        points: user.points,
+        avatar: user.avatar,
+        phone: user.phone,
+        clientId: user.clientId,
+        notificationPreferences: user.notificationPreferences,
+        stats: user.stats
       },
     });
   } catch (error) {
@@ -108,31 +125,108 @@ router.post('/register', validateRegister, async (req, res) => {
 });
 
 // Get current user route
-router.get('/me', async (req, res) => {
+router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, config.jwtSecret);
-    const user = await User.findById(decoded.id).select('-password');
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    res.json(user);
+    res.json({
+      user: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+        points: req.user.points,
+        avatar: req.user.avatar,
+        phone: req.user.phone,
+        clientId: req.user.clientId,
+        company: req.user.company,
+        notificationPreferences: req.user.notificationPreferences,
+        stats: req.user.stats
+      }
+    });
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
     console.error('Get current user error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Handle undefined auth routes
+// Update profile route
+router.put('/profile', authMiddleware, async (req, res) => {
+  try {
+    const { name, phone, avatar, notificationPreferences } = req.body;
+    
+    const user = req.user;
+    
+    if (name) user.name = name;
+    if (phone) user.phone = phone;
+    if (avatar) user.avatar = avatar;
+    if (notificationPreferences) user.notificationPreferences = {
+      ...user.notificationPreferences,
+      ...notificationPreferences
+    };
+    
+    user.updatedAt = new Date();
+    
+    await user.save();
+    
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        points: user.points,
+        avatar: user.avatar,
+        phone: user.phone,
+        clientId: user.clientId,
+        company: user.company,
+        notificationPreferences: user.notificationPreferences,
+        stats: user.stats
+      }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get user clients (for admin)
+router.get('/clients', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied. Admin only endpoint.' });
+    }
+    
+    const clients = await User.find({ role: 'client' })
+      .select('name email phone avatar company stats');
+      
+    res.json({ clients });
+  } catch (error) {
+    console.error('Get clients error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get user dealers (for client)
+router.get('/dealers', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'client') {
+      return res.status(403).json({ message: 'Access denied. Admin or client only endpoint.' });
+    }
+    
+    const query = req.user.role === 'client' ? { clientId: req.user._id } : {};
+    
+    const dealers = await User.find({ role: 'dealer', ...query })
+      .select('name email phone avatar clientId company stats')
+      .populate('clientId', 'name email');
+      
+    res.json({ dealers });
+  } catch (error) {
+    console.error('Get dealers error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Handle undefined authMiddleware routes
 router.use((req, res) => {
   res.status(404).json({ message: 'Auth endpoint not found' });
 });

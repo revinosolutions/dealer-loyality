@@ -1,41 +1,77 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Trophy, Mail, Lock, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
-const LoginPage = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+const LoginPage: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { login, error: authError, isAuthenticated, isLoading, clearError } = useAuth();
+  const [formData, setFormData] = useState({
+    email: '',
+    password: '',
+  });
+  const [error, setError] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showDemoOptions, setShowDemoOptions] = useState(false);
-  
-  const { login, loading, error } = useAuth();
-  const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Check if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      // Force redirect
+      window.location.href = '/dashboard';
+    }
+  }, [isAuthenticated]);
+
+  // Show auth errors
+  useEffect(() => {
+    if (authError) {
+      setError(authError);
+    }
+  }, [authError]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
     
-    try {
-      await login(email, password);
-      navigate('/dashboard');
-    } catch (err) {
-      // Error handling is done in the auth context
+    // Clear errors when user types
+    if (error) {
+      setError('');
+      clearError();
     }
   };
 
-  const handleDemoLogin = async (role: 'super_admin' | 'client' | 'dealer') => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    
+    try {
+      await login({
+        email: formData.email,
+        password: formData.password
+      });
+      // Redirect is handled in the login function and useEffect above
+    } catch (err: any) {
+      setError(err.message || 'Failed to login');
+    }
+  };
+
+  const handleDemoLogin = async (role: 'superadmin' | 'admin' | 'client' | 'dealer') => {
     const demoCredentials = {
-      super_admin: { email: 'admin@revino.com', password: 'password123' },
-      client: { email: 'client@example.com', password: 'password123' },
-      dealer: { email: 'dealer@example.com', password: 'password123' },
+      superadmin: { email: 'superadmin@revino.com', password: 'password' },
+      admin: { email: 'admin@revino.com', password: 'password' },
+      client: { email: 'client@example.com', password: 'password' },
+      dealer: { email: 'dealer@example.com', password: 'password' }
     };
     
     try {
-      const { email, password } = demoCredentials[role];
-      await login(email, password);
-      navigate('/dashboard');
-    } catch (err) {
-      // Error handling is done in the auth context
+      await login(demoCredentials[role]);
+      // Redirect is handled in the login function and useEffect above
+    } catch (err: any) {
+      setError(err.message || 'Demo login failed');
     }
   };
 
@@ -85,6 +121,17 @@ const LoginPage = () => {
           <div className="text-center mb-10">
             <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h2>
             <p className="text-gray-600">Sign in to access your account</p>
+            <div className="mt-4">
+              <button 
+                onClick={() => navigate('/')} 
+                className="text-white bg-indigo-600 hover:bg-indigo-700 transition-colors px-4 py-2 rounded-md flex items-center mx-auto"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M9.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L7.414 9H15a1 1 0 110 2H7.414l2.293 2.293a1 1 0 010 1.414z" clipRule="evenodd" />
+                </svg>
+                Back to Home
+              </button>
+            </div>
           </div>
           
           <form onSubmit={handleSubmit}>
@@ -105,9 +152,10 @@ const LoginPage = () => {
                 </div>
                 <input
                   id="email"
+                  name="email"
                   type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={formData.email}
+                  onChange={handleChange}
                   className="pl-10 w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   placeholder="you@example.com"
                   required
@@ -130,9 +178,10 @@ const LoginPage = () => {
                 </div>
                 <input
                   id="password"
+                  name="password"
                   type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={formData.password}
+                  onChange={handleChange}
                   className="pl-10 w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   placeholder="••••••••"
                   required
@@ -158,9 +207,9 @@ const LoginPage = () => {
             <button
               type="submit"
               className="w-full bg-indigo-600 text-white py-3 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors disabled:opacity-70"
-              disabled={loading}
+              disabled={isLoading}
             >
-              {loading ? 'Signing in...' : 'Sign In'}
+              {isLoading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
           
@@ -175,23 +224,30 @@ const LoginPage = () => {
             {showDemoOptions && (
               <div className="mt-4 space-y-3">
                 <button
-                  onClick={() => handleDemoLogin('super_admin')}
-                  className="w-full bg-amber-100 text-amber-800 py-2 px-4 rounded-md hover:bg-amber-200 transition-colors"
-                  disabled={loading}
+                  onClick={() => handleDemoLogin('superadmin')}
+                  className="w-full bg-blue-100 text-blue-800 py-2 px-4 rounded-md hover:bg-blue-200 transition-colors"
+                  disabled={isLoading}
                 >
-                  Super Admin Demo
+                  Demo Superadmin Login
+                </button>
+                <button
+                  onClick={() => handleDemoLogin('admin')}
+                  className="w-full bg-emerald-100 text-emerald-800 py-2 px-4 rounded-md hover:bg-emerald-200 transition-colors"
+                  disabled={isLoading}
+                >
+                  Demo Admin Login
                 </button>
                 <button
                   onClick={() => handleDemoLogin('client')}
-                  className="w-full bg-emerald-100 text-emerald-800 py-2 px-4 rounded-md hover:bg-emerald-200 transition-colors"
-                  disabled={loading}
+                  className="w-full bg-purple-100 text-purple-800 py-2 px-4 rounded-md hover:bg-purple-200 transition-colors"
+                  disabled={isLoading}
                 >
                   Client Demo
                 </button>
                 <button
                   onClick={() => handleDemoLogin('dealer')}
-                  className="w-full bg-blue-100 text-blue-800 py-2 px-4 rounded-md hover:bg-blue-200 transition-colors"
-                  disabled={loading}
+                  className="w-full bg-pink-100 text-pink-800 py-2 px-4 rounded-md hover:bg-pink-200 transition-colors"
+                  disabled={isLoading}
                 >
                   Dealer Demo
                 </button>

@@ -1,17 +1,17 @@
 import React from 'react';
 import { 
   Bell, 
-  Search, 
-  MessagesSquare,
-  ChevronDown 
+  MessagesSquare
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { Bars3Icon } from '@heroicons/react/24/outline';
 
 type HeaderProps = {
-  title: string;
+  onMenuClick: () => void;
+  title?: string;
 };
 
-const Header = ({ title }: HeaderProps) => {
+const Header: React.FC<HeaderProps> = ({ onMenuClick, title }) => {
   const { user } = useAuth();
   const [showNotifications, setShowNotifications] = React.useState(false);
   const [showMessages, setShowMessages] = React.useState(false);
@@ -77,132 +77,150 @@ const Header = ({ title }: HeaderProps) => {
   }, []);
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div className="flex items-center justify-between px-4 py-3 lg:px-6">
-        <h1 className="text-xl font-semibold text-gray-800">{title}</h1>
-        
-        <div className="hidden md:flex items-center relative">
-          <div className="relative mx-4">
-            <input
-              type="text"
-              placeholder="Search..."
-              className="pl-9 pr-4 py-2 w-64 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            />
-            <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-          </div>
-        </div>
-        
-        <div className="flex items-center space-x-3">
-          {/* Notifications */}
-          <div className="relative" ref={notificationsRef}>
+    <header className="bg-white shadow">
+      <div className="px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16">
+          <div className="flex items-center">
             <button
-              className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-              onClick={() => {
-                setShowNotifications(!showNotifications);
-                setShowMessages(false);
-              }}
+              type="button"
+              className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+              onClick={onMenuClick}
             >
-              <Bell size={20} />
-              {notifications.some(n => n.unread) && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-              )}
+              <span className="sr-only">Open sidebar</span>
+              <Bars3Icon className="h-6 w-6" aria-hidden="true" />
             </button>
-            
-            {showNotifications && (
-              <div className="absolute right-0 mt-2 w-80 bg-white rounded-md shadow-lg border border-gray-200 z-50">
-                <div className="p-3 border-b border-gray-200">
-                  <h3 className="text-sm font-semibold">Notifications</h3>
+            {title && (
+              <h1 className="ml-4 text-xl font-semibold text-gray-800">{title}</h1>
+            )}
+          </div>
+          <div className="flex items-center space-x-4">
+            {/* Notifications */}
+            <div className="relative" ref={notificationsRef}>
+              <button
+                className="relative p-2 rounded-full text-gray-600 hover:bg-gray-100 transition-colors"
+                onClick={() => {
+                  setShowNotifications(!showNotifications);
+                  setShowMessages(false);
+                }}
+              >
+                <Bell size={20} />
+                {notifications.some(n => n.unread) && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
+              
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 rounded-md shadow-lg border border-gray-200 bg-white z-50">
+                  <div className="p-3 border-b border-gray-200">
+                    <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
                   {notifications.length > 0 ? (
                     notifications.map((notification) => (
                       <div 
                         key={notification.id}
-                        className={`p-3 border-b border-gray-100 hover:bg-gray-50 ${notification.unread ? 'bg-blue-50' : ''}`}
+                          className={`p-3 border-b border-gray-100 hover:bg-gray-50 ${
+                            notification.unread ? 'bg-blue-50' : ''
+                          }`}
                       >
                         <div className="flex justify-between items-start">
                           <div>
-                            <p className="text-sm font-medium text-gray-900">{notification.title}</p>
-                            <p className="text-xs text-gray-600 mt-1">{notification.description}</p>
+                              <p className="text-sm font-medium text-gray-900">
+                                {notification.title}
+                              </p>
+                              <p className="text-xs mt-1 text-gray-600">
+                                {notification.description}
+                              </p>
                           </div>
-                          <span className="text-xs text-gray-500">{notification.time}</span>
+                            <span className="text-xs text-gray-500">
+                              {notification.time}
+                            </span>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="p-4 text-center text-gray-500">
+                      <div className="p-4 text-center text-gray-500">
                       No notifications
                     </div>
                   )}
                 </div>
-                <div className="p-2 text-center border-t border-gray-200">
-                  <button className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                  <div className="p-2 text-center border-t border-gray-200">
+                    <button className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
                     View all notifications
                   </button>
                 </div>
               </div>
             )}
-          </div>
-          
-          {/* Messages */}
-          <div className="relative" ref={messagesRef}>
-            <button
-              className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-              onClick={() => {
-                setShowMessages(!showMessages);
-                setShowNotifications(false);
-              }}
-            >
-              <MessagesSquare size={20} />
-              {messages.some(m => m.unread) && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-              )}
-            </button>
+            </div>
             
-            {showMessages && (
-              <div className="absolute right-0 mt-2 w-80 bg-white rounded-md shadow-lg border border-gray-200 z-50">
-                <div className="p-3 border-b border-gray-200">
-                  <h3 className="text-sm font-semibold">Messages</h3>
+            {/* Messages */}
+            <div className="relative" ref={messagesRef}>
+              <button
+                className="relative p-2 rounded-full text-gray-600 hover:bg-gray-100 transition-colors"
+                onClick={() => {
+                  setShowMessages(!showMessages);
+                  setShowNotifications(false);
+                }}
+              >
+                <MessagesSquare size={20} />
+                {messages.some(m => m.unread) && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
+              
+              {showMessages && (
+                <div className="absolute right-0 mt-2 w-80 rounded-md shadow-lg border border-gray-200 bg-white z-50">
+                  <div className="p-3 border-b border-gray-200">
+                    <h3 className="text-sm font-semibold text-gray-900">Messages</h3>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
                   {messages.length > 0 ? (
                     messages.map((message) => (
                       <div 
                         key={message.id}
-                        className={`p-3 border-b border-gray-100 hover:bg-gray-50 ${message.unread ? 'bg-blue-50' : ''}`}
+                          className={`p-3 border-b border-gray-100 hover:bg-gray-50 ${
+                            message.unread ? 'bg-blue-50' : ''
+                          }`}
                       >
                         <div className="flex justify-between items-start">
                           <div>
-                            <p className="text-sm font-medium text-gray-900">{message.sender}</p>
-                            <p className="text-xs text-gray-600 mt-1">{message.content}</p>
+                              <p className="text-sm font-medium text-gray-900">
+                                {message.sender}
+                              </p>
+                              <p className="text-xs mt-1 text-gray-600">
+                                {message.content}
+                              </p>
                           </div>
-                          <span className="text-xs text-gray-500">{message.time}</span>
+                            <span className="text-xs text-gray-500">
+                              {message.time}
+                            </span>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="p-4 text-center text-gray-500">
+                      <div className="p-4 text-center text-gray-500">
                       No messages
                     </div>
                   )}
                 </div>
-                <div className="p-2 text-center border-t border-gray-200">
-                  <button className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                  <div className="p-2 text-center border-t border-gray-200">
+                    <button className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
                     View all messages
                   </button>
                 </div>
               </div>
             )}
-          </div>
-          
-          {/* User menu */}
-          <div className="relative inline-block text-left">
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-800 font-medium">
-                {user?.name?.charAt(0) || 'U'}
-              </div>
-              <div className="hidden md:block">
-                <ChevronDown size={16} className="text-gray-500" />
+            </div>
+            
+            {/* User menu - just display user info, logout moved to sidebar */}
+            <div className="relative inline-block text-left">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-full flex items-center justify-center font-medium bg-indigo-100 text-indigo-800">
+                  {user?.name?.charAt(0) || 'U'}
+                </div>
+                <div className="hidden md:block">
+                  <span className="text-sm font-medium text-gray-700">{user?.name || 'User'}</span>
+                </div>
               </div>
             </div>
           </div>

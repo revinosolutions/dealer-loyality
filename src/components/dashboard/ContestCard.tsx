@@ -1,82 +1,97 @@
 import React from 'react';
-import { Trophy, Calendar } from 'lucide-react';
+import { Trophy, Calendar, Users, Award } from 'lucide-react';
+import { Contest } from '../../contexts/DataContext';
 
-type ContestProps = {
-  id: string;
-  title: string;
-  startDate: string;
-  endDate: string;
-  goal: string;
-  progress: number;
-  reward: string;
-  status: 'active' | 'upcoming' | 'completed';
-};
+interface ContestCardProps extends Contest {}
 
-const ContestCard = ({
-  id,
+const ContestCard: React.FC<ContestCardProps> = ({
   title,
+  description,
   startDate,
   endDate,
-  goal,
+  status,
   progress,
-  reward,
-  status
-}: ContestProps) => {
-  const statusColors = {
-    active: 'bg-green-100 text-green-800',
-    upcoming: 'bg-blue-100 text-blue-800',
-    completed: 'bg-gray-100 text-gray-800'
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  totalParticipants,
+  prizePool,
+  category
+}) => {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active':
+        return 'bg-green-100 text-green-800';
+      case 'upcoming':
+        return 'bg-blue-100 text-blue-800';
+      case 'completed':
+        return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 transition-all duration-200 hover:shadow-md">
-      <div className="flex items-start justify-between mb-4">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-amber-100">
-            <Trophy size={20} className="text-amber-600" />
+          <div className="bg-indigo-100 p-2 rounded-lg">
+            <Trophy className="h-6 w-6 text-indigo-600" />
           </div>
-          <h3 className="text-gray-900 font-medium">{title}</h3>
+          <span className="text-sm font-medium text-gray-500">{category}</span>
         </div>
-        <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusColors[status]}`}>
+        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(status)}`}>
           {status.charAt(0).toUpperCase() + status.slice(1)}
         </span>
       </div>
       
-      <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-        <Calendar size={16} />
-        <span>{formatDate(startDate)} - {formatDate(endDate)}</span>
-      </div>
+      <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
+      <p className="text-gray-600 text-sm mb-4">{description}</p>
       
-      <div className="mb-4">
-        <div className="flex justify-between items-center mb-1">
-          <span className="text-sm text-gray-500">Progress</span>
-          <span className="text-sm font-medium text-gray-700">{progress}%</span>
+      <div className="space-y-2 mb-4">
+        <div className="flex justify-between items-center text-sm">
+          <span className="text-gray-500">Progress</span>
+          <span className="font-medium text-gray-900">{progress}%</span>
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div 
-            className="bg-indigo-600 h-2 rounded-full transition-all duration-500 ease-out" 
+            className="bg-indigo-600 h-2 rounded-full"
             style={{ width: `${progress}%` }}
-          ></div>
+          />
         </div>
       </div>
       
-      <div className="text-sm text-gray-600 mb-4">
-        <p><span className="font-medium">Goal:</span> {goal}</p>
-        <p className="mt-1"><span className="font-medium">Reward:</span> {reward}</p>
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-gray-400" />
+          <div className="text-sm">
+            <div className="text-gray-500">Start</div>
+            <div className="font-medium text-gray-900">
+              {new Date(startDate).toLocaleDateString()}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-gray-400" />
+          <div className="text-sm">
+            <div className="text-gray-500">End</div>
+            <div className="font-medium text-gray-900">
+              {new Date(endDate).toLocaleDateString()}
+            </div>
+          </div>
+        </div>
       </div>
       
-      <div className="mt-2">
-        <a 
-          href={`/contests/${id}`}
-          className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-        >
-          View details
-        </a>
+      <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-gray-400" />
+          <span className="text-sm text-gray-500">
+            {totalParticipants} participants
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Award className="h-4 w-4 text-indigo-400" />
+          <span className="text-sm font-medium text-indigo-600">
+            ${prizePool.toLocaleString()}
+          </span>
+        </div>
       </div>
     </div>
   );
