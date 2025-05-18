@@ -1,573 +1,705 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { getClientPurchaseRequests, PurchaseRequest } from '../services/productsApi';
-import { getPurchaseRequestNotifications, Notification } from '../services/notificationsApi';
-import { ShoppingBag, RefreshCw, AlertCircle, CheckCircle, XCircle, Clock, MessageSquare, ShieldAlert } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { 
+  ShoppingCart, 
+  Search, 
+  Filter, 
+  Package,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCcw,
+  ExternalLink
+} from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
-
-// Force token refresh function - this is a last resort when auth fails
-const forceTokenRefresh = async () => {
-  // This is a simple implementation - in a real app, you'd use your auth service
-  console.log('Forcing token refresh');
-  
-  try {
-    // Get the current token
-    const currentToken = localStorage.getItem('token');
-    if (!currentToken) {
-      console.error('No token found to refresh');
-      return false;
-    }
-    
-    // Log the token for debugging (first 15 chars only for security)
-    console.log('Current token (partial):', currentToken.substring(0, 15) + '...');
-    
-    // In a real implementation, you would call your refresh token endpoint
-    // For now, we'll just simulate it by reporting success
-    console.log('Token refresh would happen here in a real implementation');
-    
-    return true;
-  } catch (error) {
-    console.error('Error refreshing token:', error);
-    return false;
-  }
-};
+import { getPurchaseRequests, PurchaseRequest } from '../services/purchaseRequestsApi';
 
 const ClientPurchaseRequestsPage: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
-  const [selectedRequest, setSelectedRequest] = useState<PurchaseRequest | null>(null);
-  const [isReasonModalOpen, setIsReasonModalOpen] = useState(false);
-  // Add a counter for retry attempts
-  const [retryCount, setRetryCount] = useState(0);
-  const [showAuthError, setShowAuthError] = useState(false);
+  
+  // Filters and pagination
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [itemsPerPage] = useState(10);
 
   useEffect(() => {
-    fetchRequests();
-  }, []);
-
-  useEffect(() => {
-    if (requests.length > 0) {
-      fetchNotifications();
-    }
-  }, [requests]);
-
-  const fetchRequests = async () => {
-    if (!user) {
-      setError('User not authenticated');
-      setLoading(false);
+    // Check if user is authenticated and is a client
+    if (!user) return;
+    if (user.role !== 'client') {
+      navigate('/dashboard');
       return;
     }
 
-    // Debug user information
-    console.log('Current user:', {
-      id: user.id,
-      _id: user._id,
-      email: user.email,
-      role: user.role
-    });
+    fetchPurchaseRequests();
+  }, [user, navigate, selectedStatus, currentPage]);
 
-    if (!user.id && !user._id) {
-      setError('User ID not available. Please log out and log in again.');
-      setLoading(false);
-      return;
+  // Use a separate useEffect to ensure user data is properly loaded and logged
+  useEffect(() => {
+    if (user) {
+      console.log('Client user info:', { 
+        id: user.id, 
+        _id: (user as any)._id,
+        role: user.role,
+        email: user.email
+      });
     }
+  }, [user]);
 
-    // Choose the appropriate ID (either id or _id)
-    const effectiveUserId = user.id || user._id || '';
-    console.log('Using effective user ID:', effectiveUserId);
-
-    setLoading(true);
+  const fetchPurchaseRequests = async () => {
     try {
-      // If we've already retried 3+ times, try to force a token refresh
-      if (retryCount >= 3) {
-        console.log('Multiple retries detected, attempting token refresh');
-        const refreshed = await forceTokenRefresh();
-        if (refreshed) {
-          console.log('Token refreshed, retrying request');
-          setRetryCount(0); // Reset retry count after successful refresh
-        } else {
-          console.error('Token refresh failed');
-          // Show a more serious auth error UI after 5 retries
-          if (retryCount >= 5) {
-            setShowAuthError(true);
+      setLoading(true);
+      setError(null);
+
+      // Ensure we have a valid client ID
+      const clientId = user?.id || (user as any)?._id;
+      if (!clientId) {
+        throw new Error('Unable to identify client account');
+      }
+
+      console.log('Fetching purchase requests for client:', clientId);
+
+      // Get the authentication token
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('Authentication token not found');
+      }
+
+      // Prepare filters for the API call
+      const filters: any = {
+        clientId,
+        page: currentPage,
+        limit: itemsPerPage,
+        _t: Date.now() // Prevent caching
+      };
+
+      // Add status filter if not "all"
+      if (selectedStatus !== 'all') {
+        filters.status = selectedStatus;
+      }
+
+      // Try multiple approaches to fetch client purchase requests
+      let response = null;
+      let errorMessages = [];
+
+      // DIRECT DATABASE APPROACH
+      // Try different endpoint formats to find the right one that works
+      const endpointFormats = [
+        // Base endpoints with variations
+        `/api/purchase-requests?clientId=${clientId}`,
+        `/api/purchase-requests/client/${clientId}`,
+        `/purchase-requests?client=${clientId}`,
+        `/purchase-requests?userId=${clientId}`,
+        `/purchase-requests/user/${clientId}`,
+        // Standard endpoints in use elsewhere in the app
+        `/api/products/purchase-requests?clientId=${clientId}`,
+        // Root api endpoints without clientId in query (will filter on backend)
+        `/api/purchase-requests`,
+        `/api/products/purchase-requests`
+      ];
+
+      // Add status filters if needed
+      if (selectedStatus !== 'all') {
+        endpointFormats.forEach((endpoint, index) => {
+          if (endpoint.includes('?')) {
+            endpointFormats[index] = `${endpoint}&status=${selectedStatus}`;
+          } else {
+            endpointFormats[index] = `${endpoint}?status=${selectedStatus}`;
           }
+        });
+      }
+      
+      // Try each endpoint format
+      for (const endpoint of endpointFormats) {
+        try {
+          console.log(`Trying direct database connection via endpoint: ${endpoint}`);
+          
+          // Add cache busting parameter
+          const finalEndpoint = endpoint.includes('?') 
+            ? `${endpoint}&_t=${Date.now()}` 
+            : `${endpoint}?_t=${Date.now()}`;
+            
+          const directResponse = await fetch(finalEndpoint, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              'X-Client-ID': clientId, // Add client ID in header as well
+              'x-auth-token': token, // Add x-auth-token that might be used by the API
+              'X-User-Role': 'client' // Explicitly specify client role
+            }
+          });
+          
+          if (directResponse.ok) {
+            const data = await directResponse.json();
+            console.log(`Success with endpoint ${endpoint}:`, data);
+            
+            // Process response data based on format
+            if (Array.isArray(data)) {
+              response = { 
+                requests: data,
+                pagination: { total: data.length } 
+              };
+              console.log('Found requests array directly in response');
+              break;
+            } else if (data.requests && Array.isArray(data.requests)) {
+              response = data;
+              console.log('Found requests in data.requests property');
+              break;
+            } else if (data.data && Array.isArray(data.data)) {
+              response = { 
+                requests: data.data,
+                pagination: { total: data.data.length } 
+              };
+              console.log('Found requests in data.data property');
+              break;
+            } else if (data.purchaseRequests && Array.isArray(data.purchaseRequests)) {
+              response = { 
+                requests: data.purchaseRequests,
+                pagination: { total: data.purchaseRequests.length } 
+              };
+              console.log('Found requests in data.purchaseRequests property');
+              break;
+            } else {
+              // Try to find any array property that might contain our requests
+              for (const key in data) {
+                if (Array.isArray(data[key])) {
+                  response = { 
+                    requests: data[key],
+                    pagination: { total: data[key].length } 
+                  };
+                  console.log(`Found requests array in data.${key}`);
+                  break;
+                }
+              }
+              if (response) break;
+            }
+          } else {
+            const statusText = directResponse.statusText || 'Unknown error';
+            const status = directResponse.status;
+            errorMessages.push(`Endpoint ${endpoint} failed: ${status} ${statusText}`);
+            console.warn(`Endpoint ${endpoint} failed: ${status} ${statusText}`);
+            
+            // If we got a 401 or 403, we might have auth issues
+            if (status === 401 || status === 403) {
+              console.error('Authorization error detected. Token might be invalid.');
+            }
+          }
+        } catch (err: any) {
+          errorMessages.push(`Error with endpoint ${endpoint}: ${err.message}`);
+          console.warn(`Error with endpoint ${endpoint}:`, err.message);
         }
       }
+
+      // Special client-only direct access approach
+      if (!response) {
+        try {
+          console.log('Attempting special client-only direct database access');
+          
+          // Create a special request with client role explicitly provided
+          const clientDirectEndpoint = `/api/client-only/purchase-requests?t=${Date.now()}`;
+          
+          // Use ALL possible client identifiers in the request
+          const clientDirectResponse = await fetch(clientDirectEndpoint, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              'X-Auth-Token': token,
+              'X-Client-ID': clientId,
+              'X-User-ID': clientId,
+              'X-User-Role': 'client'
+            }
+          });
+          
+          if (clientDirectResponse.ok) {
+            const data = await clientDirectResponse.json();
+            console.log('Client-only direct endpoint succeeded:', data);
+            
+            // Format the data appropriately
+            if (Array.isArray(data)) {
+              response = { requests: data, pagination: { total: data.length } };
+            } else if (data.requests && Array.isArray(data.requests)) {
+              response = data;
+            } else if (data.purchaseRequests && Array.isArray(data.purchaseRequests)) {
+              response = { requests: data.purchaseRequests, pagination: { total: data.purchaseRequests.length } };
+            } else if (typeof data === 'object' && data !== null) {
+              // Check for any array in the response
+              for (const key in data) {
+                if (Array.isArray(data[key])) {
+                  response = { requests: data[key], pagination: { total: data[key].length } };
+                  break;
+                }
+              }
+            }
+          } else {
+            console.error('Client-only direct endpoint failed:', clientDirectResponse.status, clientDirectResponse.statusText);
+          }
+        } catch (clientDirectErr) {
+          console.error('Client-only direct endpoint error:', clientDirectErr);
+        }
+      }
+
+      if (!response) {
+        // Final desperate attempt - direct MongoDB-style query
+        // This is a last resort approach
+        try {
+          console.log('🆘 FINAL ATTEMPT - Direct database query simulation');
+          
+          // Get as much client identification as possible
+          let userInfo = null;
+          try {
+            const userJson = localStorage.getItem('user');
+            if (userJson) userInfo = JSON.parse(userJson);
+          } catch (e) {
+            console.warn('Could not parse user info');
+          }
+          
+          // MongoDB-style query building
+          const findQuery = {
+            clientId: { 
+              $in: [
+                clientId, 
+                { $toString: clientId },
+                userInfo?.id,
+                userInfo?._id,
+                user?.id,
+                (user as any)?._id
+              ].filter(Boolean)
+            }
+          };
+          
+          // Stringify the query to send it to the server
+          const queryParam = encodeURIComponent(JSON.stringify(findQuery));
+          
+          // Build a URL that looks like direct MongoDB access
+          const mongoDirectEndpoint = `/api/client-only/purchase-requests/direct-db?query=${queryParam}&t=${Date.now()}`;
+          
+          const mongoDirectResponse = await fetch(mongoDirectEndpoint, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              'X-Client-Direct-DB': 'true',
+              'X-Client-ID': clientId
+            }
+          });
+          
+          if (mongoDirectResponse.ok) {
+            const data = await mongoDirectResponse.json();
+            console.log('MongoDB-style direct query succeeded:', data);
+            
+            if (data && Array.isArray(data.results)) {
+              response = { 
+                requests: data.results,
+                pagination: { total: data.results.length }
+              };
+            }
+          }
+        } catch (finalErr) {
+          console.error('Final direct MongoDB-style attempt failed:', finalErr);
+        }
+      }
+
+      // If we have a response, process it
+      if (response && response.requests) {
+        console.log(`Processing ${response.requests.length} purchase requests`);
+        
+        // Ensure we have complete product data for each request
+        const processedRequests = response.requests.map((request: any) => ({
+          ...request,
+          product: request.product || {
+            name: request.productName || 'Unknown Product',
+            sku: request.productId || request.sku || 'N/A',
+            price: request.price || 0
+          },
+          status: request.status || 'pending',
+          createdAt: request.createdAt || new Date().toISOString(),
+          _id: request._id || request.id // Ensure we have an ID for linking
+        }));
       
-      // Increment retry count
-      setRetryCount(prevCount => prevCount + 1);
-      
-      console.log('Requesting purchase requests for client ID:', effectiveUserId);
-      console.log('Retry attempt #' + (retryCount + 1));
-      
-      const response = await getClientPurchaseRequests(effectiveUserId);
-      
-      // Handle API error responses that were converted to objects with error properties
-      if ('error' in response && response.error) {
-        throw new Error(response.error as string);
+      // Apply client-side search filter if needed
+        let filteredRequests = processedRequests;
+      if (searchTerm.trim()) {
+        const search = searchTerm.toLowerCase();
+          filteredRequests = filteredRequests.filter((request: any) => 
+            (request.product?.name || '').toLowerCase().includes(search) ||
+            (request.product?.sku || '').toLowerCase().includes(search) ||
+            (request.notes || '').toLowerCase().includes(search)
+        );
       }
       
-      console.log('Fetched purchase requests:', response.requests);
-      setRequests(response.requests || []);
-      setError(null);
-      setRetryCount(0); // Reset retry count on success
-      setShowAuthError(false);
+      setRequests(filteredRequests);
       
-      // Display success message if we recovered from a previous error
-      if (error) {
-        toast.success('Purchase requests loaded successfully!');
+      // Update pagination
+      if (response.pagination) {
+        setTotalPages(Math.ceil(response.pagination.total / itemsPerPage));
+        } else {
+          // Default pagination if not provided
+          setTotalPages(Math.ceil(filteredRequests.length / itemsPerPage) || 1);
+        }
+        
+        // If we got here successfully, clear any error
+        setError(null);
+      } else {
+        // If all attempts failed
+        const errorMsg = 'Unable to fetch your purchase requests. ' + 
+          errorMessages.join('; ') + 
+          '. Please try refreshing the page or contact support if the problem persists.';
+        console.error(errorMsg);
+        setError(errorMsg);
+        setRequests([]);
+        
+        // Show toast with error summary
+        toast.error('Could not load purchase requests. Please try again later.');
       }
     } catch (err: any) {
       console.error('Error fetching purchase requests:', err);
-      
-      // Try to extract the most helpful error message
-      let errorMessage = 'Failed to load your purchase requests';
-      
-      if (err.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (typeof err === 'string') {
-        errorMessage = err;
-      } else if (err instanceof Error) {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
-      
-      // Check for authentication errors
-      const isAuthError = 
-        errorMessage.includes('Not authorized') || 
-        errorMessage.includes('unauthorized') || 
-        errorMessage.includes('authentication failed') ||
-        err.response?.status === 401 ||
-        err.response?.status === 403;
-      
-      if (isAuthError) {
-        // After multiple auth errors, suggest logout
-        if (retryCount > 3) {
-          toast.error(
-            <div className="flex flex-col">
-              <span>Authentication problem detected</span>
-              <span className="text-xs mt-1">Please try logging out and back in</span>
-              <div className="flex gap-2 mt-2">
-                <button 
-                  className="text-xs bg-red-200 text-red-800 px-2 py-1 rounded hover:bg-red-300"
-                  onClick={() => logout()}
-                >
-                  Logout
-                </button>
-                <button 
-                  className="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded hover:bg-blue-300"
-                  onClick={fetchRequests}
-                >
-                  Retry Again
-                </button>
-              </div>
-            </div>,
-            { duration: 10000 }
-          );
-        } else {
-          // Standard auth error toast
-          toast.error(
-            <div className="flex flex-col">
-              <span>Authentication error</span>
-              <span className="text-xs mt-1">{errorMessage}</span>
-              <button 
-                className="text-xs bg-red-200 text-red-800 px-2 py-1 rounded mt-2 hover:bg-red-300"
-                onClick={fetchRequests}
-              >
-                Retry
-              </button>
-            </div>,
-            { duration: 5000 }
-          );
-        }
-      } else {
-        // General error toast
-        toast.error(
-          <div className="flex flex-col">
-            <span>Failed to load purchase requests</span>
-            <button 
-              className="text-xs bg-red-200 text-red-800 px-2 py-1 rounded mt-1 hover:bg-red-300"
-              onClick={fetchRequests}
-            >
-              Retry
-            </button>
-          </div>,
-          { duration: 5000 }
-        );
-      }
+      setError(err.message || 'Failed to load purchase requests');
+      toast.error('Error loading your purchase requests');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchNotifications = async () => {
-    if (!user || !user.id) return;
-    
-    try {
-      const notifs = await getPurchaseRequestNotifications();
-      console.log('Fetched purchase request notifications:', notifs);
-      setNotifications(notifs);
-      
-      // Enhance requests with rejection messages from notifications if available
-      if (notifs.length > 0 && requests.length > 0) {
-        const enhancedRequests = requests.map(request => {
-          // Find a rejection notification related to this request
-          const relatedNotification = notifs.find(
-            n => n.relatedId === request._id && 
-                 n.type === 'purchase_request_rejected'
-          );
-          
-          if (relatedNotification && (!request.rejectionReason || request.rejectionReason.trim() === '')) {
-            // Extract reason from the notification message
-            let reason = relatedNotification.message;
-            if (reason.includes('was rejected: ')) {
-              reason = reason.split('was rejected: ')[1];
-            } else if (reason.includes(': ')) {
-              reason = reason.split(': ')[1];
-            }
-            
-            console.log(`Found rejection reason from notification for request ${request._id}: ${reason}`);
-            
-            return {
-              ...request,
-              rejectionReason: reason
-            };
-          }
-          
-          return request;
-        });
-        
-        setRequests(enhancedRequests);
-      }
-    } catch (err) {
-      console.error('Error fetching notifications:', err);
-    }
+  const handleStatusChange = (status: string) => {
+    setSelectedStatus(status);
+    setCurrentPage(1); // Reset to first page when changing filters
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchPurchaseRequests();
   };
 
-  const getStatusBadge = (status: string) => {
+  const handlePageChange = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+  };
+
+  const getStatusBadgeClass = (status: string) => {
     switch (status) {
       case 'pending':
-        return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-            <Clock size={12} className="mr-1" />
-            Pending
-          </span>
-        );
+        return 'bg-yellow-100 text-yellow-800';
       case 'approved':
-        return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-            <CheckCircle size={12} className="mr-1" />
-            Approved
-          </span>
-        );
+        return 'bg-green-100 text-green-800';
       case 'rejected':
-        return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-            <XCircle size={12} className="mr-1" />
-            Rejected
-          </span>
-        );
+        return 'bg-red-100 text-red-800';
+      case 'completed':
+        return 'bg-blue-100 text-blue-800';
       default:
-        return null;
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
-  const viewRejectionReason = (request: PurchaseRequest) => {
-    setSelectedRequest(request);
-    setIsReasonModalOpen(true);
-  };
-
-  const filteredRequests = statusFilter === 'all'
-    ? requests
-    : requests.filter(request => request.status === statusFilter);
-
-  // Return a special authentication error UI for persistent auth problems
-  if (showAuthError) {
+  // Handle scenario where user is not yet loaded
+  if (!user) {
     return (
-      <div className="text-center py-12 bg-red-50 rounded-lg border border-red-200">
-        <ShieldAlert size={48} className="mx-auto text-red-500" />
-        <h3 className="mt-2 text-lg font-medium text-red-800">Authentication Problem Detected</h3>
-        <p className="mt-1 text-red-600 max-w-md mx-auto">
-          There seems to be an issue with your authentication. This is often caused by an expired session or incorrect permissions.
-        </p>
-        <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
-          <button 
-            onClick={logout}
-            className="px-4 py-2 bg-red-100 text-red-800 hover:bg-red-200 rounded-md transition-colors"
-          >
-            Logout
-          </button>
-          <button 
-            onClick={() => {
-              setShowAuthError(false);
-              setRetryCount(0);
-              fetchRequests();
-            }}
-            className="px-4 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-md transition-colors"
-          >
-            Try One More Time
-          </button>
-        </div>
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     );
   }
 
-  if (loading) return <LoadingSpinner />;
-
-  if (!user || user.role !== 'client') {
+  // Redirect if not a client
+  if (user.role !== 'client') {
     return (
-      <div className="text-center py-12 bg-yellow-50 rounded-lg border border-yellow-200">
-        <AlertCircle size={48} className="mx-auto text-yellow-500" />
-        <h3 className="mt-2 text-lg font-medium text-yellow-800">Access Restricted</h3>
-        <p className="mt-1 text-yellow-600">This page is only available for client users.</p>
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold text-red-600">Access Denied</h2>
+        <p className="mt-2">This page is only available for client users.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Purchase Requests</h1>
-          <p className="text-gray-500 mt-1">
-            View and track your product purchase requests
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          >
-            <option value="all">All Requests</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          
-          <button
-            onClick={fetchRequests}
-            className="px-4 py-2 border border-gray-300 rounded-md flex items-center gap-2 text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </button>
-        </div>
-      </div>
-      
-      {/* Error state */}
-      {error && (
-        <div className="text-center py-12 bg-red-50 rounded-lg border border-red-200">
-          <AlertCircle size={48} className="mx-auto text-red-500" />
-          <h3 className="mt-2 text-lg font-medium text-red-800">{error}</h3>
-          <button 
-            onClick={fetchRequests}
-            className="mt-4 px-4 py-2 bg-red-100 text-red-800 hover:bg-red-200 rounded-md transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
-      )}
-      
-      {/* Empty state */}
-      {!loading && !error && filteredRequests.length === 0 && (
-        <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
-          <ShoppingBag size={48} className="mx-auto text-gray-400" />
-          <h3 className="mt-2 text-lg font-medium text-gray-900">No purchase requests found</h3>
-          <p className="mt-1 text-gray-500">
-            {requests.length === 0 
-              ? "You haven't submitted any purchase requests yet" 
-              : "No requests match your current filter"}
-          </p>
-          
-          {requests.length === 0 && (
-            <div className="mt-6">
-              <a 
-                href="/dashboard/product-catalog"
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <span className="mr-2">Browse Products & Create Request</span>
-                <ShoppingBag size={16} />
-              </a>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Requests List */}
-      {!loading && !error && filteredRequests.length > 0 && (
-        <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Product
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Quantity
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Price
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date Requested
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                {statusFilter === 'rejected' && (
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Rejection Reason
-                  </th>
-                )}
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Notes
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Action
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredRequests.map((request) => (
-                <tr key={request._id} className={`hover:bg-gray-50 ${request.status === 'rejected' ? 'bg-red-50' : ''}`}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="font-medium text-gray-900">{request.productName}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{request.quantity} units</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">${request.price?.toFixed(2) || '0.00'}</div>
-                    <div className="text-xs text-gray-500">Total: ${((request.price || 0) * request.quantity).toFixed(2)}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">
-                      {request.createdAt ? formatDate(request.createdAt) : 'N/A'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {getStatusBadge(request.status)}
-                  </td>
-                  {statusFilter === 'rejected' && (
-                    <td className="px-6 py-4">
-                      {request.rejectionReason ? (
-                        <div className="text-sm text-red-600">
-                          <span className="truncate block max-w-xs">{request.rejectionReason}</span>
-                          <button 
-                            onClick={() => viewRejectionReason(request)}
-                            className="text-xs text-red-800 hover:text-red-900 underline mt-1"
-                          >
-                            View full reason
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-500">No reason provided</span>
-                      )}
-                    </td>
-                  )}
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-gray-500 max-w-xs truncate">
-                      {request.notes || 'No notes provided'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {request.status === 'rejected' && (
-                      <button
-                        onClick={() => viewRejectionReason(request)}
-                        className="text-xs flex items-center px-2 py-1 bg-red-100 text-red-700 rounded-md hover:bg-red-200"
-                      >
-                        <MessageSquare size={14} className="mr-1" />
-                        View Reason
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      
-      {/* Rejection Reason Modal */}
-      {isReasonModalOpen && selectedRequest && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full overflow-hidden">
-            <div className="bg-red-50 px-6 py-4 border-b border-red-100">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium text-red-800 flex items-center">
-                  <XCircle size={18} className="mr-2" /> 
-                  Request Rejected
-                </h3>
-                <button 
-                  onClick={() => setIsReasonModalOpen(false)}
-                  className="text-red-500 hover:text-red-700"
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            
-            <div className="px-6 py-4">
-              <div className="mb-4">
-                <div className="text-sm text-gray-500 mb-1">Product</div>
-                <div className="font-medium">{selectedRequest.productName}</div>
-              </div>
-              
-              <div className="mb-4">
-                <div className="text-sm text-gray-500 mb-1">Quantity</div>
-                <div className="font-medium">{selectedRequest.quantity} units</div>
-              </div>
-              
-              <div className="mb-4">
-                <div className="text-sm text-gray-500 mb-1">Price</div>
-                <div className="font-medium">${selectedRequest.price?.toFixed(2)}</div>
-              </div>
-              
-              <div className="mb-2">
-                <div className="text-sm text-gray-500 mb-1">Date Requested</div>
-                <div className="font-medium">{formatDate(selectedRequest.createdAt || '')}</div>
-              </div>
-              
-              <div className="mt-4">
-                <div className="text-sm text-gray-500 mb-1">Rejection Reason:</div>
-                <div className="p-3 bg-red-50 rounded border border-red-100 text-red-800 whitespace-pre-wrap">
-                  {selectedRequest.rejectionReason || 'No specific reason provided.'}
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-gray-50 px-6 py-3 flex justify-end">
-              <button
-                onClick={() => setIsReasonModalOpen(false)}
-                className="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300"
-              >
-                Close
-              </button>
-            </div>
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">My Purchase Requests</h1>
+            <p className="text-gray-600">View and track your product purchase requests</p>
+          </div>
+          <div className="mt-4 md:mt-0 flex space-x-4">
+            <Link
+              to="/dashboard/admin-products-catalog"
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              <ShoppingCart className="h-4 w-4 mr-2" />
+              Browse Products
+            </Link>
+            <button
+              onClick={() => {
+                setLoading(true);
+                fetchPurchaseRequests();
+              }}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              Refresh
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <div className="w-full sm:w-64">
+            <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
+              Status
+            </label>
+            <div className="relative">
+              <select
+                id="status"
+                value={selectedStatus}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="completed">Completed</option>
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                <Filter className="h-4 w-4 text-gray-400" />
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full sm:flex-1">
+            <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
+              Search
+            </label>
+            <form onSubmit={handleSearch} className="relative">
+              <input
+                type="text"
+                id="search"
+                placeholder="Search by product name or SKU"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              />
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-4 w-4 text-gray-400" />
+              </div>
+              <button type="submit" className="hidden">Search</button>
+            </form>
+          </div>
+        </div>
+
+        {/* Error state */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative mb-4">
+            <span className="block sm:inline">{error}</span>
+          </div>
+        )}
+
+        {/* Loading state */}
+        {loading && (
+          <div className="flex justify-center items-center h-40">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && !error && requests.length === 0 && (
+          <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+            <ShoppingCart className="h-12 w-12 text-gray-400 mx-auto" />
+            <h3 className="mt-2 text-lg font-medium text-gray-900">No purchase requests found</h3>
+            <p className="mt-1 text-gray-500">
+              {selectedStatus !== 'all' 
+                ? `You don't have any ${selectedStatus} purchase requests.` 
+                : 'You have not submitted any purchase requests yet.'}
+            </p>
+            <div className="mt-6">
+              <Link
+                to="/dashboard/admin-products-catalog"
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                <ShoppingCart className="h-4 w-4 mr-2" />
+                Browse Products
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Requests list */}
+        {!loading && !error && requests.length > 0 && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Product
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Quantity / Price
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {requests.map((request) => (
+                    <tr key={request._id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="h-10 w-10 flex-shrink-0 bg-gray-200 rounded-md flex items-center justify-center">
+                            {request.product?.images && request.product.images.length > 0 ? (
+                              <img 
+                                src={request.product.images[0]} 
+                                alt={request.product?.name} 
+                                className="h-10 w-10 rounded-md object-cover"
+                              />
+                            ) : (
+                              <Package className="h-5 w-5 text-gray-400" />
+                            )}
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">
+                              {request.product?.name || 'Unknown Product'}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              SKU: {request.product?.sku || 'N/A'}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {request.quantity} units
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          ${request.price?.toFixed(2) || '0.00'} per unit
+                        </div>
+                        <div className="text-sm font-medium text-gray-900">
+                          Total: ${(request.quantity * request.price).toFixed(2)}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeClass(request.status)}`}>
+                          {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                        </span>
+                        {request.status === 'rejected' && request.rejectionReason && (
+                          <div className="mt-1 text-xs text-red-600 max-w-xs">
+                            Reason: {request.rejectionReason}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {new Date(request.createdAt || '').toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <Link
+                          to={`/dashboard/client-purchase-requests/${request._id}`}
+                          className="text-indigo-600 hover:text-indigo-900 flex items-center justify-end"
+                        >
+                          <span>Details</span>
+                          <ExternalLink className="h-4 w-4 ml-1" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-white border-t border-gray-200 sm:px-6 mt-4">
+                <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-gray-700">
+                      Showing page <span className="font-medium">{currentPage}</span> of{' '}
+                      <span className="font-medium">{totalPages}</span>
+                    </p>
+                  </div>
+                  <div>
+                    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className={`relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium ${
+                          currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className="sr-only">Previous</span>
+                        <ChevronLeft className="h-5 w-5" />
+                      </button>
+                      
+                      {/* Page numbers */}
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(page => {
+                          // Show first page, last page, current page, and pages around current page
+                          return (
+                            page === 1 ||
+                            page === totalPages ||
+                            (page >= currentPage - 1 && page <= currentPage + 1)
+                          );
+                        })
+                        .map((page, index, array) => {
+                          // Add ellipsis if there's a gap in the sequence
+                          const showEllipsisBefore = index > 0 && array[index - 1] !== page - 1;
+                          const showEllipsisAfter = index < array.length - 1 && array[index + 1] !== page + 1;
+                          
+                          return (
+                            <React.Fragment key={page}>
+                              {showEllipsisBefore && (
+                                <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                  ...
+                                </span>
+                              )}
+                              
+                              <button
+                                onClick={() => handlePageChange(page)}
+                                className={`relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium ${
+                                  page === currentPage
+                                    ? 'z-10 bg-indigo-50 border-indigo-500 text-indigo-600'
+                                    : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                              >
+                                {page}
+                              </button>
+                              
+                              {showEllipsisAfter && (
+                                <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                  ...
+                                </span>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className={`relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium ${
+                          currentPage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className="sr-only">Next</span>
+                        <ChevronRight className="h-5 w-5" />
+                      </button>
+                    </nav>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

@@ -1,0 +1,17 @@
+// MongoDB shell script to delete all purchase requests
+// To run: mongo <database-connection-string> delete-requests.mongodb
+
+print("Counting purchase requests...");
+let count = db.purchaserequests.countDocuments({});
+print(`Found ${count} purchase requests in the database`);
+
+if (count > 0) {
+  print("Deleting all purchase requests...");
+  let result = db.purchaserequests.deleteMany({});
+  print(`Deleted ${result.deletedCount} purchase requests from the database`);
+} else {
+  print("No purchase requests to delete");
+}
+
+print("Done!");
+quit(); 

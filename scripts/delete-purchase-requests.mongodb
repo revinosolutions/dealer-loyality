@@ -1,0 +1,15 @@
+// MongoDB script to delete all purchase requests
+// To run: mongo localhost:27017/dealer-loyalty delete-purchase-requests.mongodb
+
+// Count purchase requests before deletion
+let count = db.purchaserequests.countDocuments({});
+print(`Found ${count} purchase requests in the database`);
+
+// Delete all purchase requests
+let result = db.purchaserequests.deleteMany({});
+
+// Show results
+print(`Deleted ${result.deletedCount} purchase requests from the database`);
+
+// Exit the shell
+quit(); 

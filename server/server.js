@@ -18,7 +18,6 @@ import usersRoutes from './routes/users.js';
 import organizationsRoutes from './routes/organizations.js';
 import adminRoutes from './routes/admin.js';
 import contestRoutes from './routes/contests.js';
-import productRoutes from './routes/products.js';
 import orderRoutes from './routes/orders.js';
 import inventoryRoutes from './routes/inventory.js';
 import salesRoutes from './routes/sales.js';
@@ -30,8 +29,11 @@ import dealerSlotRoutes from './routes/dealerSlots.js';
 import clientOrderRoutes from './routes/clientOrders.js';
 import dealerOrderRoutes from './routes/dealerOrders.js';
 import clientsRoutes from '../routes/clients.js';
-import productRequestsRoutes from '../routes/productRequests.js';
 import dealersRoutes from '../routes/dealers.js';
+import productsRoutes from './routes/products.js';
+import healthCheckRoutes from './routes/health-check.js';
+import clientRequestsRoutes from './routes/client-requests.js';
+import clientOnlyRoutes from './routes/client-only.js';
 
 // Config
 dotenv.config();
@@ -40,11 +42,11 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5000;
 
 // Middleware
 const corsOptions = {
-  origin: true, // Allow all origins in development
+  origin: ['http://localhost:3000'], // Only allow port 3000 for frontend
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
@@ -72,7 +74,6 @@ app.use('/api/users', usersRoutes);
 app.use('/api/organizations', organizationsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/contests', contestRoutes);
-app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sales', salesRoutes);
@@ -84,8 +85,11 @@ app.use('/api/dealer-slots', dealerSlotRoutes);
 app.use('/api/client-orders', clientOrderRoutes);
 app.use('/api/dealer-orders', dealerOrderRoutes);
 app.use('/api/clients', clientsRoutes);
-app.use('/api/product-requests', productRequestsRoutes);
 app.use('/api/dealers', dealersRoutes);
+app.use('/api/products', productsRoutes);
+app.use('/api/health-check', healthCheckRoutes);
+app.use('/api/client-requests', clientRequestsRoutes);
+app.use('/api/client-only', clientOnlyRoutes);
 
 // Serve static assets in production
 if (process.env.NODE_ENV === 'production') {
@@ -104,7 +108,6 @@ async function initializeDatabase() {
     // Import models
     const User = mongoose.model('User');
     const Organization = mongoose.model('Organization');
-    const Product = mongoose.model('Product');
     
     // Check if we need to create default users
     const userCount = await User.countDocuments();
@@ -134,12 +137,7 @@ async function initializeDatabase() {
       }
       
       // Create default users using the model's static method
-      const defaultAdmin = await User.createDefaultUsers(orgId);
-      
-      // Create default products using the model's static method
-      if (defaultAdmin) {
-        await Product.createDefaultProducts(orgId, defaultAdmin._id);
-      }
+      await User.createDefaultUsers(orgId);
     }
 
     console.log('Database initialized successfully');
@@ -181,5 +179,7 @@ function startNotificationScheduler() {
 }
 
 export default app;
+
+
 
 
