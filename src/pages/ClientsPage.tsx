@@ -34,6 +34,8 @@ const ClientsPage = () => {
   });
 
   useEffect(() => {
+    // Check API connectivity before fetching clients
+    checkClientApiConnectivity();
     fetchClients();
   }, []);
 
@@ -57,30 +59,116 @@ const ClientsPage = () => {
   }, [searchTerm, clients]);
 
   const fetchClients = async () => {
-    try {
+    setLoading(true);
+    setError('');
+    
+    // Define alternative endpoints to try
+    const endpointsToTry = [
+      { endpoint: 'clients', method: 'GET' as 'GET' },
+      { endpoint: '/admin/clients', method: 'GET' as 'GET' },
+      { endpoint: '/api/clients', method: 'GET' as 'GET' }
+    ];
+    
+    let clientsData = null;
+    
+    // Try each endpoint until one succeeds
+    for (const { endpoint, method } of endpointsToTry) {
       try {
-        const data = await clientsApi.getAll();
-        // Ensure data is an array before setting state
-        if (Array.isArray(data)) {
-          setClients(data as Client[]);
-          setFilteredClients(data as Client[]);
+        console.log(`Attempting to fetch clients using endpoint: ${endpoint}`);
+        
+        // Use clientsApi.getAll() for the default endpoint, otherwise use direct apiRequest
+        let response;
+        if (endpoint === 'clients') {
+          response = await clientsApi.getAll();
         } else {
-          console.error('API returned non-array data:', data);
-          setClients([]);
-          setFilteredClients([]);
-          setError('Invalid data format received from server');
+          // For other endpoints, we need to use the imported apiRequest
+          const { apiRequest } = await import('../services/api');
+          response = await apiRequest(endpoint, method);
         }
-      } catch (apiErr: any) {
-        console.error('API Error fetching clients:', apiErr);
-        setError(`Failed to fetch clients: ${apiErr.message || 'Server connection error'}`);
-        // Empty array - removed mock data
-        const mockData: Client[] = [];
-        setClients(mockData);
-        setFilteredClients(mockData);
+        
+        if (response) {
+          console.log(`Clients API Response from ${endpoint}:`, response);
+          clientsData = response;
+          break; // Stop trying endpoints if successful
+        }
+      } catch (error) {
+        console.warn(`Endpoint ${endpoint} failed:`, error);
+        // Continue to next endpoint
       }
-    } catch (error) {
-      console.error('Unexpected error:', error);
-      setError('An unexpected error occurred');
+    }
+    
+    try {
+      // If all apiRequest attempts failed, try direct axios as last resort
+      if (!clientsData) {
+        console.log('All API endpoints failed, attempting direct request...');
+        
+        try {
+          const directResponse = await fetch('/api/clients', {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          
+          if (directResponse.ok) {
+            clientsData = await directResponse.json();
+            console.log('Direct fetch succeeded:', clientsData);
+          }
+        } catch (directError) {
+          console.error('Direct fetch request also failed:', directError);
+        }
+      }
+      
+      // If we have data, process it
+      if (clientsData) {
+        let clientsList: Client[] = [];
+        
+        // Handle different response structures
+        if (Array.isArray(clientsData)) {
+          clientsList = clientsData as Client[];
+        } else if (clientsData.clients && Array.isArray(clientsData.clients)) {
+          clientsList = clientsData.clients as Client[];
+        } else if (clientsData && typeof clientsData === 'object') {
+          // Try to extract clients array from any response structure
+          const dataObj = clientsData as Record<string, unknown>;
+          for (const key in dataObj) {
+            if (Array.isArray(dataObj[key])) {
+              clientsList = dataObj[key] as Client[];
+              console.log(`Found clients array in response.${key}`);
+              break;
+            }
+          }
+        }
+        
+        console.log(`Processed ${clientsList.length} clients`);
+        
+        // Ensure all clients have required fields
+        clientsList = clientsList.map(client => ({
+          ...client,
+          _id: client._id || `temp-${Date.now()}`, // Ensure _id exists
+          name: client.name || 'Unnamed Client',
+          email: client.email || 'no-email',
+          status: client.status || 'active',
+          stats: client.stats || {
+            totalSales: 0,
+            rewardsRedeemed: 0
+          }
+        }));
+        
+        setClients(clientsList);
+        setFilteredClients(clientsList);
+      } else {
+        // If all attempts failed
+        throw new Error('Failed to fetch clients from any endpoint');
+      }
+    } catch (err: any) {
+      console.error('Error processing clients data:', err);
+      setError(`Failed to load clients: ${err.message || 'Unknown error'}`);
+      
+      // Set empty arrays as fallback
+      setClients([]);
+      setFilteredClients([]);
     } finally {
       setLoading(false);
     }
@@ -272,6 +360,38 @@ const ClientsPage = () => {
     }
   };
 
+  // Function to check API connectivity for clients
+  const checkClientApiConnectivity = async () => {
+    console.log('Checking clients API connectivity...');
+    
+    const endpointsToCheck = [
+      '/api/clients',
+      '/api/admin/clients',
+      '/clients'
+    ];
+    
+    for (const endpoint of endpointsToCheck) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'HEAD',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        console.log(`API endpoint ${endpoint} check result: ${response.status} ${response.statusText}`);
+        
+        if (response.ok) {
+          console.log(`✅ Found working clients endpoint: ${endpoint}`);
+          break;
+        }
+      } catch (error) {
+        console.warn(`❌ API endpoint ${endpoint} check failed:`, error);
+      }
+    }
+  };
+
   // Access control - only admin and dealer can view clients
   if (user?.role !== 'admin' && user?.role !== 'dealer') {
     return (
@@ -286,12 +406,26 @@ const ClientsPage = () => {
     <div className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold">Clients Management</h1>
-          <button
-            onClick={handleCreateClient}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-          >
-            Add New Client
-          </button>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => fetchClients()}
+              className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+            <button
+              onClick={handleCreateClient}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+              Add New Client
+            </button>
+          </div>
         </div>
 
         {/* Statistics Cards */}

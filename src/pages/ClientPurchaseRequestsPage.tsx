@@ -445,6 +445,51 @@ const ClientPurchaseRequestsPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Inventory Notification for approved requests */}
+        {!loading && requests.some(req => req.status === 'approved') && (
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-md p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <Package className="h-5 w-5 text-green-400" aria-hidden="true" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-green-800">
+                  Inventory Updated
+                </h3>
+                <div className="mt-2 text-sm text-green-700">
+                  <p>
+                    You have approved purchase requests! Your inventory has been updated with the requested items.
+                    Check your inventory to view and manage your stock.
+                  </p>
+                </div>
+                <div className="mt-4">
+                  <div className="-mx-2 -my-1.5 flex">
+                    <Link
+                      to="/dashboard/inventory"
+                      className="bg-green-100 px-3 py-1.5 rounded-md text-sm font-medium text-green-800 hover:bg-green-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-600"
+                      onClick={() => {
+                        // Set a flag in localStorage to force inventory refresh
+                        localStorage.setItem('forceInventoryRefresh', 'true');
+                        localStorage.setItem('lastInventoryUpdate', Date.now().toString());
+                        
+                        // Also trigger a custom event that the inventory page listens for
+                        const inventoryUpdateEvent = new CustomEvent('inventory-updated', {
+                          detail: { timestamp: Date.now() }
+                        });
+                        window.dispatchEvent(inventoryUpdateEvent);
+                        
+                        console.log('[CLIENT-PURCHASE] Triggered inventory refresh');
+                      }}
+                    >
+                      View My Inventory
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="w-full sm:w-64">

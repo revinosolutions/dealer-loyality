@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// API base URL
-const API_URL = 'http://localhost:5000/api';
+// API base URL - use relative URL to work with Vite proxy
+const API_URL = '/api';
 
 // Flag to enable mock mode (set to false to use real backend)
 const USE_MOCK = false; // Using real backend now
@@ -320,30 +320,25 @@ const login = async (data: LoginData): Promise<LoginResponse> => {
     return mockLogin(data);
   }
   
+  console.log('Making real login API call with:', { email: data.email });
+  
   try {
-    console.log('Attempting login with:', { email: data.email });
+    // Clear any previous auth state
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('auth_redirect');
+    
+    // Make login request
     const response = await axios.post(`${API_URL}/auth/login`, data);
     
-    console.log('Login successful, response:', response.data);
+    // Save token and user to localStorage
+    localStorage.setItem('token', response.data.token);
+    localStorage.setItem('user', JSON.stringify(response.data.user));
     
-    // Store token and user data
-    if (response.data.token) {
-      localStorage.setItem('token', response.data.token);
-      console.log('Token stored in localStorage:', response.data.token.substring(0, 15) + '...');
-    } else {
-      console.error('No token received in login response');
-    }
-    
-    if (response.data.user) {
-      localStorage.setItem('user', JSON.stringify(response.data.user));
-      console.log('User data stored in localStorage');
-    } else {
-      console.error('No user data received in login response');
-    }
+    console.log('Login successful, token:', response.data.token.substring(0, 15) + '...');
     
     return response.data;
-  } catch (error) {
-    console.error('Login API error:', error);
+  } catch (error: any) {
+    console.error('Login API error:', error.response?.data || error.message);
     throw error;
   }
 };

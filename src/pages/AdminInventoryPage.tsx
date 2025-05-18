@@ -200,7 +200,7 @@ const AdminInventoryPage: React.FC = () => {
       // For admin users, don't apply any filters - make this explicit
       const response = await getProducts({});
       console.log(`AdminInventoryPage: Fetched ${response.products.length} products directly:`, 
-        response.products.map(p => ({ id: p._id, name: p.name, createdBy: p.createdBy })));
+        response.products.map((p: Product) => ({ id: p._id, name: p.name, createdBy: p.createdBy })));
       
       // Convert products to inventory items
       const inventoryItems = convertProductsToInventory(response.products);
@@ -252,15 +252,20 @@ const AdminInventoryPage: React.FC = () => {
   // Update inventory item directly
   const updateInventoryItem = async (id: string, updates: Partial<InventoryItem>) => {
     try {
+      console.log('AdminInventoryPage: Updating inventory item:', { id, updates });
+      
       // Convert InventoryItem updates to Product updates
       const productUpdates = {
-        stock: updates.quantity,
+        currentStock: updates.quantity !== undefined ? updates.quantity : undefined,
         reorderLevel: updates.reorderLevel,
         reservedStock: updates.reservedQuantity
       };
       
+      console.log('AdminInventoryPage: Mapped to product updates:', productUpdates);
+      
       // Call the API to update the product
-      await updateProductInventory(id, productUpdates);
+      const updatedProduct = await updateProductInventory(id, productUpdates);
+      console.log('AdminInventoryPage: Server response:', updatedProduct);
       
       // Refresh inventory after update
       await fetchInventory();
@@ -366,7 +371,7 @@ const AdminInventoryPage: React.FC = () => {
             Refresh
           </button>
           <Link 
-            to="/products"
+            to="/dashboard/admin-products"
             className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -479,7 +484,7 @@ const AdminInventoryPage: React.FC = () => {
           </p>
           {inventory.length === 0 && (
             <Link 
-              to="/products"
+              to="/dashboard/admin-products"
               className="mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
             >
               <Plus className="h-5 w-5 mr-2" />

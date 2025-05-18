@@ -68,18 +68,25 @@ const authMiddleware = async (req, res, next) => {
     if (user.status !== 'active' && user.role !== 'superadmin') {
       return res.status(403).json({ message: 'Your account is not active. Please contact the administrator.' });
     }
-    
-    // Add user info to request object
+      // Add user info to request object
     req.user = {
       id: user._id,
       email: user.email,
       role: user.role,
       organizationId: user.organizationId,
-      clientId: user.clientId,
+      // If user is a client, ensure clientId is set to their own ID for proper access control
+      clientId: user.role === 'client' ? (user.clientId || user._id.toString()) : user.clientId,
       createdBySuperAdmin: user.createdBySuperAdmin,
       createdByAdmin: user.createdByAdmin,
       createdByClient: user.createdByClient
     };
+    
+    // Special handling for client role to ensure they have their own ID as clientId
+    if (user.role === 'client' && !user.clientId) {
+      console.log(`Client user ${user.email} missing clientId, setting to their own ID`);
+      // Update the user record to include clientId if missing
+      await User.findByIdAndUpdate(user._id, { clientId: user._id.toString() });
+    }
     
     // Update last active timestamp
     try {

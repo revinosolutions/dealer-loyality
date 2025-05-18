@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 
 // API base URL from environment variable
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001/api';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api';
 
 // Create axios instance with default config
 const api: AxiosInstance = axios.create({
@@ -143,4 +143,48 @@ export const apiService = {
   },
 };
 
-export default apiService; 
+// General purpose API request function
+export const apiRequest = async <T>(
+  endpoint: string,
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'GET',
+  data?: any,
+  params?: any,
+  customTimeout?: number
+): Promise<T> => {
+  try {
+    let response;
+    const config: any = params ? { params } : {};
+    
+    // Apply custom timeout if provided
+    if (customTimeout) {
+      config.timeout = customTimeout;
+    }
+    
+    switch (method) {
+      case 'GET':
+        response = await api.get<T>(endpoint, config);
+        break;
+      case 'POST':
+        response = await api.post<T>(endpoint, data, config);
+        break;
+      case 'PUT':
+        response = await api.put<T>(endpoint, data, config);
+        break;
+      case 'PATCH':
+        response = await api.patch<T>(endpoint, data, config);
+        break;
+      case 'DELETE':
+        response = await api.delete<T>(endpoint, config);
+        break;
+      default:
+        throw new Error(`Unsupported method: ${method}`);
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error(`API request failed: ${method} ${endpoint}`, error);
+    throw error;
+  }
+};
+
+export default apiService;

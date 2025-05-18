@@ -3,8 +3,10 @@ import { apiRequest } from './api';
 // Define types
 export interface PurchaseRequest {
   _id?: string;
-  productId: string;
-  clientId: string;
+  productId: string | any; // Can be a string ID or populated product object
+  productName?: string;
+  clientId: string | any; // Can be a string ID or populated client object
+  clientName?: string;
   quantity: number;
   price: number;
   notes?: string;
@@ -173,7 +175,7 @@ export const getPurchaseRequests = async (filters: PurchaseRequestFilters = {}, 
           customConfig = 30000; // 30 seconds timeout
         }
         
-        const result = await apiRequest<{ requests: PurchaseRequest[], pagination: any }>(
+        const result = await apiRequest<any>(
           endpoint,
           'GET',
           undefined,
@@ -182,27 +184,44 @@ export const getPurchaseRequests = async (filters: PurchaseRequestFilters = {}, 
         );
         
         console.log(`Successfully fetched purchase requests using endpoint: ${endpoint}`);
+        console.log('Raw API result structure:', JSON.stringify(result).substring(0, 300) + '...');
         
-        // If we got a valid response with requests, use it
-        if (result && Array.isArray(result.requests)) {
-          response = result;
-          break;
-        } else if (result && Array.isArray(result)) {
-          // Handle case where API returns array directly
+        // Handle various response formats from the server
+        // Case 1: API returned the requests array directly
+        if (Array.isArray(result)) {
+          console.log('Response is a direct array of requests');
           response = { 
             requests: result, 
             pagination: { total: result.length } 
           };
           break;
-        } else if (result) {
-          // Try to extract requests array from response
+        } 
+        // Case 2: API returned an object with a requests property
+        else if (result && Array.isArray(result.requests)) {
+          console.log('Response contains requests array in result.requests');
+          response = result;
+          break;
+        }
+        // Case 3: The response itself is a single request (direct array access)
+        else if (result && typeof result === 'object' && result._id) {
+          console.log('Response appears to be a single request object');
+          response = { 
+            requests: [result], 
+            pagination: { total: 1 } 
+          };
+          break;
+        }
+        // Case 4: API directly returned the requests (not in a 'requests' property)
+        else if (result) {
+          // Try to find if any property contains an array of requests
+          console.log('Looking for requests array in response properties');
           for (const key in result) {
-            if (Array.isArray((result as Record<string, unknown>)[key])) {
+            if (Array.isArray(result[key])) {
+              console.log(`Found array in result.${key}, treating as requests`);
               response = { 
-                requests: (result as Record<string, unknown>)[key] as PurchaseRequest[], 
-                pagination: { total: ((result as Record<string, unknown>)[key] as any[]).length } 
+                requests: result[key], 
+                pagination: { total: result[key].length } 
               };
-              console.log(`Found requests array in response.${key}`);
               break;
             }
           }
@@ -258,25 +277,112 @@ export const getPurchaseRequests = async (filters: PurchaseRequestFilters = {}, 
       }
     }
     
-    // If we found a response, log and return it
+    // If we found a response, process it
     if (response) {
       console.log(`Retrieved ${response.requests?.length || 0} purchase requests`);
       
-      // Ensure all request objects have required fields
+      // Check the first request to better understand the structure
+      if (response.requests && response.requests.length > 0) {
+        const firstRequest = response.requests[0];
+        console.log('Example request structure:', {
+          id: firstRequest._id,
+          productId: firstRequest.productId,
+          clientId: firstRequest.clientId,
+          // Check if we have object references or string IDs
+          productIdType: typeof firstRequest.productId,
+          clientIdType: typeof firstRequest.clientId,
+          // Check if productId is populated
+          hasPopulatedProduct: firstRequest.productId && 
+                               typeof firstRequest.productId === 'object' && 
+                               (firstRequest.productId as any).name !== undefined,
+          // Check if clientId is populated
+          hasPopulatedClient: firstRequest.clientId && 
+                              typeof firstRequest.clientId === 'object' && 
+                              (firstRequest.clientId as any).name !== undefined,
+        });
+      }
+      
+      // Ensure we handle both populated objects and direct properties
       if (Array.isArray(response.requests)) {
-        response.requests = response.requests.map((request: Partial<PurchaseRequest>) => ({
-          ...request,
-          status: request.status || 'pending',
-          product: request.product || {
-            name: 'Unknown Product',
-            sku: 'N/A',
+        response.requests = response.requests.map((request: any) => {
+          // Create a new request object to ensure we have all properties
+          const processedRequest: PurchaseRequest = {
+            ...request,
+            status: request.status || 'pending',
+            quantity: request.quantity || 0,
             price: request.price || 0
-          },
-          client: request.client || {
-            name: 'Unknown Client',
-            email: 'N/A'
+          };
+          
+          // Make sure the product data is available
+          if (!processedRequest.product) {
+            processedRequest.product = {
+              name: 'Unknown Product',
+              sku: 'N/A',
+              price: request.price || 0
+            };
+              
+            // First, check if productId is a populated object
+            if (request.productId && typeof request.productId === 'object') {
+              // productId is populated, extract the needed fields
+              const populatedProduct = request.productId;
+              processedRequest.product = {
+                name: populatedProduct.name || 'Unknown Product',
+                sku: populatedProduct.sku || 'N/A',
+                price: populatedProduct.price || request.price || 0,
+                images: populatedProduct.images || [],
+                category: populatedProduct.category || ''
+              };
+              
+              // Also save the name to productName for compatibility
+              if (populatedProduct.name) {
+                processedRequest.productName = populatedProduct.name;
+              }
+            } 
+            // Then check for direct productName property
+            else if (request.productName) {
+              processedRequest.product = {
+                name: request.productName,
+                sku: request.productId || 'N/A',
+                price: request.price || 0
+              };
+            }
+            // Fallback is already set above
           }
-        }));
+          
+          // Make sure the client data is available
+          if (!processedRequest.client) {
+            processedRequest.client = {
+              name: 'Unknown Client',
+              email: 'N/A'
+            };
+            
+            // First, check if clientId is a populated object
+            if (request.clientId && typeof request.clientId === 'object') {
+              // clientId is populated, extract the needed fields
+              const populatedClient = request.clientId;
+              processedRequest.client = {
+                name: populatedClient.name || 'Unknown Client',
+                email: populatedClient.email || 'N/A',
+                company: populatedClient.company || ''
+              };
+              
+              // Also save the name to clientName for compatibility
+              if (populatedClient.name) {
+                processedRequest.clientName = populatedClient.name;
+              }
+            }
+            // Then check for direct clientName property
+            else if (request.clientName) {
+              processedRequest.client = {
+                name: request.clientName,
+                email: request.clientId || 'N/A'
+              };
+            }
+            // Fallback is already set above
+          }
+          
+          return processedRequest;
+        });
       }
       
       return response;

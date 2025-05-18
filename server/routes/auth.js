@@ -326,21 +326,57 @@ router.post('/register', [
 
 // Refresh token route
 router.post('/refresh-token', async (req, res) => {
-  const { refreshToken } = req.cookies;
+  // Try to get refresh token from cookies first, then from Authorization header
+  let refreshToken = req.cookies.refreshToken;
+  
+  // If not in cookies, try to get from Authorization header
+  if (!refreshToken) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      // Use the access token as fallback if no refresh token is available
+      refreshToken = authHeader.substring(7);
+      console.log('Using access token as fallback for refresh');
+    } else if (req.headers['x-auth-token']) {
+      refreshToken = req.headers['x-auth-token'];
+      console.log('Using x-auth-token as fallback for refresh');
+    }
+  }
 
   if (!refreshToken) {
     return res.status(401).json({ message: 'Refresh token not found' });
   }
-
   try {
-    // Verify the refresh token
-    const decoded = jwt.verify(refreshToken, config.jwt.refreshSecret);
-
+    // Try to verify the token
+    let decoded;
+    let isAccessToken = false;
+    
+    try {
+      // First try to verify as a refresh token
+      decoded = jwt.verify(refreshToken, config.jwt.refreshSecret);
+      console.log('Successfully verified refresh token');
+    } catch (refreshError) {
+      // If that fails, try to verify as an access token (as a fallback)
+      try {
+        decoded = jwt.verify(refreshToken, config.jwt.secret);
+        isAccessToken = true;
+        console.log('Falling back to access token for refresh');
+      } catch (accessError) {
+        throw new Error('Invalid token');
+      }
+    }
+    
+    // Verify the user exists
+    const user = await User.findById(decoded.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
     // Generate new access token
     const payload = {
       user: {
         id: decoded.user.id,
-        role: decoded.user.role
+        role: decoded.user.role,
+        organizationId: user.organizationId
       }
     };
 

@@ -56,7 +56,7 @@ const config = {
   corsOptions: {
     origin: process.env.NODE_ENV === 'production'
       ? [process.env.FRONTEND_URL || 'https://yourproductiondomain.com']
-      : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
+      : ['http://localhost:5173', 'http://localhost:3000'],
     credentials: true,
   },
 

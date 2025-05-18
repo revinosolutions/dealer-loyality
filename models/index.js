@@ -11,6 +11,7 @@ import './Reward.js';
 import './Notification.js';
 import './DealerSlot.js';
 import './ClientOrder.js';
+import './PurchaseRequest.js';
 
 // Export models - this ensures all models are loaded before the routes use them
 export default {

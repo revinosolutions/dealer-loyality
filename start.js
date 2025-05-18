@@ -11,10 +11,9 @@ const execPromise = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Modify the backend port to use 5001 instead of 5000
-const BACKEND_PORT = 5001;
-// Modify the frontend port to use 3001 instead of 3000
-const FRONTEND_PORT = 3001;
+// Use standard ports 5000 for backend and 3000 for frontend
+const BACKEND_PORT = 5000;
+const FRONTEND_PORT = 3000;
 
 // Check if a port is in use
 async function isPortInUse(port) {
@@ -441,4 +440,4 @@ async function startServer() {
 }
 
 // Run the startup
-startServer(); 
+startServer();

@@ -9,7 +9,7 @@ import Header from './components/layout/Header';
 const HomePage = React.lazy(() => import('./pages/HomePage'));
 const LoginPage = React.lazy(() => import('./pages/LoginPage'));
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
-const ProductsPage = React.lazy(() => import('./pages/ProductsPage'));
+const AdminProductsPage = React.lazy(() => import('./pages/AdminProductsPage'));
 const OrdersPage = React.lazy(() => import('./pages/OrdersPage'));
 const InventoryPage = React.lazy(() => import('./pages/InventoryPage'));
 const InventoryManagementPage = React.lazy(() => import('./pages/InventoryManagementPage'));
@@ -27,7 +27,6 @@ const SettingsPage = React.lazy(() => import('./pages/SettingsPage'));
 const SuperAdminSettingsPage = React.lazy(() => import('./pages/SuperAdminSettingsPage'));
 const SuperAdminPage = React.lazy(() => import('./pages/SuperAdminPage'));
 const NotFoundPage = React.lazy(() => import('./pages/NotFoundPage'));
-const ProductCatalogPage = React.lazy(() => import('./pages/ProductCatalogPage'));
 const AdminManagementPage = React.lazy(() => import('./pages/AdminManagementPage'));
 const PlatformAnalyticsPage = React.lazy(() => import('./pages/platform-analytics/PlatformAnalyticsPage'));
 const DealerSlotsPage = React.lazy(() => import('./pages/DealerSlotsPage'));
@@ -36,9 +35,10 @@ const DealerSlotDetailsPage = React.lazy(() => import('./pages/DealerSlotDetails
 const EditDealerSlotPage = React.lazy(() => import('./pages/EditDealerSlotPage'));
 const ClientOrdersPage = React.lazy(() => import('./pages/ClientOrdersPage'));
 const DealerCatalogPage = React.lazy(() => import('./pages/DealerCatalogPage'));
-const AdminPurchaseRequestsDebugPage = React.lazy(() => import('./pages/AdminPurchaseRequestsDebugPage'));
+const AdminProductsCatalogPage = React.lazy(() => import('./pages/AdminProductsCatalogPage'));
 const AdminPurchaseRequestsPage = React.lazy(() => import('./pages/AdminPurchaseRequestsPage'));
 const ClientPurchaseRequestsPage = React.lazy(() => import('./pages/ClientPurchaseRequestsPage'));
+const ClientInventoryPage = React.lazy(() => import('./pages/ClientInventoryPage'));
 
 // Protected layout with sidebar and header
 const ProtectedLayout = () => {
@@ -81,20 +81,21 @@ const AppRouter = () => {
           {/* Dashboard */}
           <Route path="dashboard" element={<DashboardPage />} />
           
-          {/* Products */}
-          <Route path="dashboard/products" element={<ProductsPage />} />
-          <Route path="dashboard/product-catalog" element={<ProductCatalogPage />} />
-          
           {/* Orders */}
           <Route path="dashboard/orders" element={<OrdersPage />} />
           
-          {/* Purchase Requests */}
-          <Route path="dashboard/purchase-requests" element={<AdminPurchaseRequestsPage />} />
-          <Route path="dashboard/purchase-requests-debug" element={<AdminPurchaseRequestsDebugPage />} />
-          <Route path="dashboard/client-purchase-requests" element={<ClientPurchaseRequestsPage />} />
-          
           {/* Client Orders */}
           <Route path="dashboard/client-orders" element={<ClientOrdersPage />} />
+          
+          {/* Admin Products Catalog for Clients */}
+          <Route path="dashboard/admin-products-catalog" element={<AdminProductsCatalogPage />} />
+          
+          {/* Purchase Requests */}
+          <Route path="dashboard/admin-purchase-requests" element={<AdminPurchaseRequestsPage />} />
+          <Route path="dashboard/client-purchase-requests" element={<ClientPurchaseRequestsPage />} />
+          
+          {/* Client Inventory with Approved Stock */}
+          <Route path="dashboard/client-inventory" element={<ClientInventoryPage />} />
           
           {/* Dealer Slots */}
           <Route path="dashboard/dealer-slots" element={<DealerSlotsPage />} />
@@ -109,7 +110,7 @@ const AppRouter = () => {
           <Route path="dashboard/dealers" element={<DealersPage />} />
           
           {/* Inventory */}
-          <Route path="dashboard/inventory" element={<InventoryPage />} />
+          <Route path="dashboard/inventory" element={<Navigate to="/dashboard/inventory-management" replace />} />
           <Route path="dashboard/inventory-management" element={<InventoryManagementPage />} />
           <Route path="dashboard/inventory-allocation" element={<InventoryAllocationPage />} />
           
@@ -140,6 +141,7 @@ const AppRouter = () => {
           
           {/* Admin Management */}
           <Route path="dashboard/admin" element={<AdminManagementPage />} />
+          <Route path="dashboard/admin-products" element={<AdminProductsPage />} />
           
           {/* SuperAdmin */}
           <Route path="dashboard/superadmin" element={<SuperAdminPage />} />

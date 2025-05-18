@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { createPurchaseRequest, Product } from '../../services/productsApi';
+import { Product } from '../../services/productsApi';
+import { createPurchaseRequest } from '../../services/purchaseRequestsApi';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
+
+// Remove the local dummy implementation since we've added it to the API
+// const createPurchaseRequest = async (requestData: any) => { ... };
 
 interface PurchaseRequestFormProps {
   product: Product;
@@ -19,10 +23,30 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({
   const [price, setPrice] = useState(product.price);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Calculate min and max limits
   const minQuantity = product.minOrderQuantity || 1;
   const maxQuantity = product.maxOrderQuantity || product.stock;
+
+  // Reset form when product changes
+  useEffect(() => {
+    setQuantity(minQuantity);
+    setPrice(product.price);
+    setNotes('');
+    setSubmitSuccess(false);
+    setRequestId(null);
+    setFormError(null);
+  }, [product, minQuantity]);
+  
+  // Clear form error when form inputs change
+  useEffect(() => {
+    if (formError) {
+      setFormError(null);
+    }
+  }, [quantity, price, notes]);
 
   // Debug information
   useEffect(() => {
@@ -33,121 +57,178 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({
         _id: (user as any)._id,
         role: user.role,
         email: user.email,
-        organization: user.organization,
-        token: localStorage.getItem('token') ? 'Present' : 'Missing'
+        organization: user.organization
       } : null 
     });
-    
-    // Check if token is present in localStorage
-    const token = localStorage.getItem('token');
-    if (!token) {
-      console.warn('No auth token found in localStorage');
-    } else {
-      console.log('Auth token found:', token.substring(0, 15) + '...');
-    }
   }, [user, isAuthenticated]);
+
+  const getUserId = () => {
+    if (!user) return null;
+    // Return the first non-empty value from these options
+    return user.id || (user as any)._id || null;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Reset error state
+    setFormError(null);
+    
     // Check authentication
     if (!isAuthenticated || !user) {
+      setFormError('You must be logged in to submit a purchase request');
       toast.error('You must be logged in to submit a purchase request');
       console.error('Authentication error:', { isAuthenticated, user });
       return;
     }
     
-    // Enhanced user ID extraction - try multiple possible sources
-    // MongoDB may return _id instead of id
-    const userId = (user.id || (user as any)._id)?.toString();
-    
-    // Log all possible ID fields from user object for debugging
-    console.log('User object ID check:', {
-      'user.id': user.id,
-      'user._id': (user as any)._id,
-      'userId extracted': userId,
-      'token present': !!localStorage.getItem('token')
-    });
-    
+    // Get user ID
+    const userId = getUserId();
     if (!userId) {
+      setFormError('Unable to identify user account');
       toast.error('Unable to identify user account');
       console.error('User ID missing:', user);
       return;
     }
     
+    // Input validation
     if (quantity <= 0) {
+      setFormError('Quantity must be greater than zero');
       toast.error('Quantity must be greater than zero');
       return;
     }
 
     if (quantity > product.stock) {
+      setFormError('Requested quantity exceeds available stock');
       toast.error('Requested quantity exceeds available stock');
       return;
     }
 
     if (price <= 0) {
+      setFormError('Price must be greater than zero');
       toast.error('Price must be greater than zero');
       return;
     }
 
+    setIsSubmitting(true);
+    
     try {
-      setIsSubmitting(true);
-      
-      // Create a complete request object with all necessary data
+      // Create the request object
       const requestData = {
         productId: product._id as string,
         clientId: userId,
         quantity,
         price,
-        notes
+        notes: notes.trim() || undefined,
+        // Add organization ID if available in user object
+        organizationId: user.organization?.id
       };
       
-      // Log the full request object
-      console.log('Full purchase request data:', requestData);
+      console.log('Submitting purchase request with data:', requestData);
       
-      // Check if token exists
-      const token = localStorage.getItem('token');
-      if (!token) {
-        toast.error('Authentication token missing. Please log in again.');
-        console.error('No auth token found when submitting purchase request');
-        setIsSubmitting(false);
-        return;
+      // Send the request
+      const response = await createPurchaseRequest(requestData);
+      
+      console.log('Purchase request submitted successfully:', response);
+      toast.success('Purchase request submitted successfully');
+      
+      // Store the request ID if available
+      if (response && (response._id || response.id)) {
+        setRequestId(response._id || response.id);
       }
       
-      try {
-        const response = await createPurchaseRequest(requestData);
-        console.log('Purchase request submitted successfully:', response);
-        toast.success('Purchase request submitted successfully');
+      // Set success state
+      setSubmitSuccess(true);
+      
+      // Call the parent component callback
+      setTimeout(() => {
         onRequestSubmitted();
-      } catch (error: any) {
-        console.error('Error submitting purchase request:', error);
-        
-        // Get detailed error information
-        const errorResponse = error.response?.data;
-        console.error('Error details:', errorResponse);
-        
-        let errorMessage = 'Failed to submit purchase request. Please try again.';
-        
-        if (error.message === 'Network Error') {
-          errorMessage = 'Network error. Please check your internet connection and try again.';
-        } else if (errorResponse?.message) {
-          errorMessage = errorResponse.message;
-        } else if (error.message) {
-          errorMessage = error.message;
-        }
-        
-        toast.error(errorMessage);
-      }
+      }, 3000);
     } catch (error: any) {
-      console.error('Unexpected error in form submission:', error);
-      toast.error('An unexpected error occurred. Please try again.');
+      console.error('Error submitting purchase request:', error);
+      
+      // Handle different types of errors
+      let errorMessage = 'Failed to submit purchase request. Please try again.';
+      
+      if (error.message) {
+        errorMessage = error.message;
+        console.error('Error message:', error.message);
+      } else if (error.response) {
+        console.error('Error response:', error.response);
+        if (error.response.data?.message) {
+          errorMessage = error.response.data.message;
+        } else if (error.response.status === 404) {
+          errorMessage = 'API endpoint not found. The service may be temporarily unavailable.';
+        } else if (error.response.status === 401) {
+          errorMessage = 'Authentication error. Please log out and log back in.';
+          // Store auth info for debugging
+          console.error('Auth state during error:', { 
+            token: localStorage.getItem('token') ? 'Present' : 'Missing',
+            isAuthenticated, 
+            user: user ? JSON.stringify(user) : 'null'
+          });
+        }
+      } else if (error.name === 'NetworkError' || error.message?.includes('Network Error')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      }
+      
+      setFormError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // If form submitted successfully, show success message
+  if (submitSuccess) {
+    return (
+      <div className="text-center py-8">
+        <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100">
+          <svg className="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+        </div>
+        <h3 className="mt-3 text-lg font-medium text-gray-900">Purchase Request Submitted!</h3>
+        <p className="mt-2 text-sm text-gray-500">
+          Your request for {quantity} units of {product.name} has been submitted successfully.
+        </p>
+        {requestId && (
+          <p className="mt-1 text-xs text-gray-400">Request ID: {requestId}</p>
+        )}
+        <p className="mt-4 text-sm text-gray-600">
+          An admin will review your request shortly. You can check the status in your Purchase Requests section.
+        </p>
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={onRequestSubmitted}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            View My Requests
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Form error message */}
+      {formError && (
+        <div className="rounded-md bg-red-50 p-4 mb-4">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-red-800">{formError}</h3>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Product
@@ -200,7 +281,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({
             min={minQuantity}
             max={maxQuantity}
             value={quantity}
-            onChange={(e) => setQuantity(parseInt(e.target.value))}
+            onChange={(e) => setQuantity(parseInt(e.target.value) || 0)}
             className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
             required
           />
@@ -225,7 +306,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({
               min="0.01"
               step="0.01"
               value={price}
-              onChange={(e) => setPrice(parseFloat(e.target.value))}
+              onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
               className="block w-full pl-7 pr-12 border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
               required
             />

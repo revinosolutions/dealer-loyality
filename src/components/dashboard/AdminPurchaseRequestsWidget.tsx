@@ -1,9 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingBag, RefreshCw, CheckCircle, XCircle, Bell } from 'lucide-react';
+import { ShoppingBag, RefreshCw, CheckCircle, XCircle, Bell, ArrowDown, ArrowUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { getPurchaseRequests, approvePurchaseRequest, rejectPurchaseRequest, reliableApprovePurchaseRequest, PurchaseRequest } from '../../services/productsApi';
+import { getPurchaseRequests, approvePurchaseRequest, rejectPurchaseRequest, reliableApprovePurchaseRequest, PurchaseRequest as BasePurchaseRequest } from '../../services/productsApi';
 import { toast } from 'react-hot-toast';
 import Modal from '../../components/Modal';
+
+// Extend the PurchaseRequest interface to include the properties we need
+interface PurchaseRequest extends BasePurchaseRequest {
+  productName?: string;
+  clientName?: string;
+  productId: string | any; // Can be string ID or populated object
+  clientId: string | any;  // Can be string ID or populated object
+}
 
 const AdminPurchaseRequestsWidget: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -46,6 +54,32 @@ const AdminPurchaseRequestsWidget: React.FC = () => {
         requestsData = [];
       }
       
+      // Debug: Log the first request in detail to see its structure
+      if (requestsData.length > 0) {
+        const firstRequest = requestsData[0];
+        console.log('First request detailed structure:');
+        console.log('- _id:', firstRequest._id);
+        console.log('- productId:', firstRequest.productId);
+        console.log('- productName:', firstRequest.productName);
+        console.log('- clientId:', firstRequest.clientId);
+        console.log('- clientName:', firstRequest.clientName);
+        console.log('- product object:', firstRequest.product);
+        console.log('- client object:', firstRequest.client);
+        
+        // If productId/clientId are objects, check their properties
+        if (firstRequest.productId && typeof firstRequest.productId === 'object') {
+          console.log('productId object properties:', Object.keys(firstRequest.productId));
+          console.log('productId.name:', (firstRequest.productId as any).name);
+          console.log('productId.sku:', (firstRequest.productId as any).sku);
+        }
+        
+        if (firstRequest.clientId && typeof firstRequest.clientId === 'object') {
+          console.log('clientId object properties:', Object.keys(firstRequest.clientId));
+          console.log('clientId.name:', (firstRequest.clientId as any).name);
+          console.log('clientId.email:', (firstRequest.clientId as any).email);
+        }
+      }
+      
       setRequests(requestsData);
       
       // Log each request for debugging
@@ -53,9 +87,10 @@ const AdminPurchaseRequestsWidget: React.FC = () => {
         requestsData.forEach((req, index) => {
           console.log(`Request ${index + 1}:`, {
             id: req._id,
-            product: req.productName,
-            client: req.clientName,
-            clientId: req.clientId,
+            product: req.product?.name || (req.productId && typeof req.productId === 'object' ? (req.productId as any).name : req.productName) || 'Unknown',
+            client: req.client?.name || (req.clientId && typeof req.clientId === 'object' ? (req.clientId as any).name : req.clientName) || 'Unknown',
+            productId: typeof req.productId === 'object' ? '(object)' : req.productId,
+            clientId: typeof req.clientId === 'object' ? '(object)' : req.clientId,
             status: req.status,
             quantity: req.quantity,
             price: req.price
@@ -82,35 +117,72 @@ const AdminPurchaseRequestsWidget: React.FC = () => {
       // Show success message with inventory update information
       toast.success('Purchase request approved successfully');
       
-      // Show additional toast with inventory update information
+      // Show enhanced inventory update notification with more details
       if (response.adminProduct && response.clientProduct) {
         toast.custom((t) => (
-          <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto flex ring-1 ring-black ring-opacity-5`}>
-            <div className="flex-1 w-0 p-4">
+          <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 divide-y divide-gray-200`}>
+            <div className="p-4 pb-3">
               <div className="flex items-start">
-                <div className="flex-shrink-0 pt-0.5">
-                  <CheckCircle size={20} className="text-green-500" />
+                <div className="flex-shrink-0">
+                  <CheckCircle className="h-6 w-6 text-green-400" aria-hidden="true" />
                 </div>
-                <div className="ml-3 flex-1">
-                  <p className="text-sm font-medium text-gray-900">
-                    Inventory Updated
-                  </p>
+                <div className="ml-3 w-0 flex-1 pt-0.5">
+                  <p className="text-sm font-medium text-gray-900">Inventory Updated Successfully</p>
                   <p className="mt-1 text-sm text-gray-500">
-                    Admin inventory: {response.adminProduct.name} reduced to {response.adminProduct.newStock} units
-                  </p>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Client inventory: {response.clientProduct.stock} units of {response.clientProduct.name} {response.clientProduct.isNew ? 'created' : 'updated'}
+                    The inventory has been updated based on the approved request.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="flex border-l border-gray-200">
-              <button onClick={() => toast.dismiss(t.id)} className="w-full border border-transparent rounded-none rounded-r-lg p-4 flex items-center justify-center text-sm font-medium text-indigo-600 hover:text-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            
+            <div className="p-4">
+              <div className="flex">
+                <div className="flex-1">
+                  <h4 className="text-sm font-semibold text-gray-900 mb-2">Admin Inventory</h4>
+                  <div className="bg-red-50 p-2 rounded-md border border-red-100 mb-2">
+                    <p className="text-xs font-medium text-red-700">
+                      {response.adminProduct.name}
+                    </p>
+                    <div className="mt-1 flex items-center">
+                      <ArrowDown size={14} className="text-red-500 mr-1" />
+                      <p className="text-sm font-semibold text-red-700">
+                        {response.adminProduct.previousStock} → {response.adminProduct.newStock} units
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <h4 className="text-sm font-semibold text-gray-900 mb-2">Client Inventory</h4>
+                  <div className="bg-green-50 p-2 rounded-md border border-green-100">
+                    <p className="text-xs font-medium text-green-700">
+                      {response.clientProduct.name}
+                    </p>
+                    <div className="mt-1 flex items-center">
+                      <ArrowUp size={14} className="text-green-500 mr-1" />
+                      <p className="text-sm font-semibold text-green-700">
+                        {response.clientProduct.isNew ? '0' : (response.clientProduct.stock - request.quantity)} → {response.clientProduct.stock} units
+                      </p>
+                    </div>
+                    <p className="text-xs text-green-600 mt-1">
+                      {response.clientProduct.isNew 
+                        ? 'New product created in client inventory' 
+                        : 'Existing product updated in client inventory'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-3 flex">
+              <button
+                type="button"
+                onClick={() => toast.dismiss(t.id)}
+                className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
+              >
                 Dismiss
               </button>
             </div>
           </div>
-        ), { duration: 5000 });
+        ), { duration: 8000 });
       }
       
       await fetchRequests();
@@ -194,7 +266,7 @@ const AdminPurchaseRequestsWidget: React.FC = () => {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <Link 
-            to="/dashboard/purchase-requests"
+            to="/dashboard/admin-purchase-requests"
             className="text-sm text-indigo-600 hover:text-indigo-800"
           >
             View All
@@ -230,51 +302,72 @@ const AdminPurchaseRequestsWidget: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {requests.slice(0, 3).map((request) => (
-                <tr key={request._id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                    {request.productName}
-                  </td>
-                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                    {request.clientName}
-                  </td>
-                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                    {request.quantity}
-                  </td>
-                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                    ${request.price?.toFixed(2)}
-                  </td>
-                  <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => handleApproveRequest(request)}
-                        disabled={processing}
-                        className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded flex items-center"
-                        title="Approve request"
-                      >
-                        <CheckCircle size={12} className="mr-1" />
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleOpenRejectModal(request)}
-                        disabled={processing}
-                        className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded flex items-center"
-                        title="Reject request"
-                      >
-                        <XCircle size={12} className="mr-1" />
-                        Reject
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {requests.slice(0, 3).map((request) => {
+                // Extract product and client info for display
+                const productName = 
+                  (request.productId && typeof request.productId === 'object' && (request.productId as any).name) ||
+                  request.product?.name || 
+                  request.productName || 
+                  'Unknown Product';
+                  
+                const productSku = 
+                  (request.productId && typeof request.productId === 'object' && (request.productId as any).sku) ||
+                  request.product?.sku || 
+                  'N/A';
+                  
+                const clientName = 
+                  (request.clientId && typeof request.clientId === 'object' && (request.clientId as any).name) ||
+                  request.client?.name || 
+                  request.clientName || 
+                  'Unknown Client';
+                
+                return (
+                  <tr key={request._id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                      {productName}
+                      <div className="text-xs text-gray-500">SKU: {productSku}</div>
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                      {clientName}
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                      {request.quantity}
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                      ${request.price?.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => handleApproveRequest(request)}
+                          disabled={processing}
+                          className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded flex items-center"
+                          title="Approve request"
+                        >
+                          <CheckCircle size={12} className="mr-1" />
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleOpenRejectModal(request)}
+                          disabled={processing}
+                          className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded flex items-center"
+                          title="Reject request"
+                        >
+                          <XCircle size={12} className="mr-1" />
+                          Reject
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           
           {requests.length > 3 && (
             <div className="text-center mt-3">
               <Link 
-                to="/dashboard/purchase-requests"
+                to="/dashboard/admin-purchase-requests"
                 className="text-xs text-gray-500 hover:text-gray-700"
               >
                 +{requests.length - 3} more requests
@@ -301,10 +394,29 @@ const AdminPurchaseRequestsWidget: React.FC = () => {
           </p>
           {selectedRequest && (
             <div className="mb-4 p-3 bg-gray-50 rounded-md">
-              <p><strong>Product:</strong> {selectedRequest.productName}</p>
-              <p><strong>Client:</strong> {selectedRequest.clientName}</p>
-              <p><strong>Quantity:</strong> {selectedRequest.quantity}</p>
-              <p><strong>Price:</strong> ${selectedRequest.price?.toFixed(2)}</p>
+              {/* Extract product and client info for display */}
+              {(() => {
+                const productName = 
+                  (selectedRequest.productId && typeof selectedRequest.productId === 'object' && (selectedRequest.productId as any).name) ||
+                  selectedRequest.product?.name || 
+                  selectedRequest.productName || 
+                  'Unknown Product';
+                  
+                const clientName = 
+                  (selectedRequest.clientId && typeof selectedRequest.clientId === 'object' && (selectedRequest.clientId as any).name) ||
+                  selectedRequest.client?.name || 
+                  selectedRequest.clientName || 
+                  'Unknown Client';
+                  
+                return (
+                  <>
+                    <p><strong>Product:</strong> {productName}</p>
+                    <p><strong>Client:</strong> {clientName}</p>
+                    <p><strong>Quantity:</strong> {selectedRequest.quantity}</p>
+                    <p><strong>Price:</strong> ${selectedRequest.price?.toFixed(2)}</p>
+                  </>
+                );
+              })()}
             </div>
           )}
           

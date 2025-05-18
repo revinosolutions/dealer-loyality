@@ -18,7 +18,9 @@ import {
   ShoppingBagIcon,
   BuildingOfficeIcon,
   UsersIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
+  DocumentTextIcon,
+  InboxIcon
 } from '@heroicons/react/24/outline';
 
 interface SidebarProps {
@@ -51,11 +53,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen }) => {
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-    { name: 'Products', href: '/dashboard/products', icon: CubeIcon },
+    { name: 'Admin Management', href: '/dashboard/admin', icon: BuildingStorefrontIcon, roles: ['admin', 'superadmin'] },
+    { name: 'Products', href: '/dashboard/admin-products', icon: CubeIcon, roles: ['admin', 'superadmin'] },
+    { name: 'Inventory', href: '/dashboard/inventory-management', icon: ClipboardDocumentListIcon, roles: ['admin', 'superadmin'] },
+    { name: 'Client Inventory', href: '/dashboard/client-inventory', icon: ClipboardDocumentListIcon, roles: ['client', 'client_admin'] },
     { name: 'Orders', href: '/dashboard/orders', icon: ShoppingCartIcon },
-    { name: 'Inventory', href: '/dashboard/inventory', icon: ClipboardDocumentListIcon },
+    { name: 'Purchase Requests', href: isAdmin ? '/dashboard/admin-purchase-requests' : '/dashboard/client-purchase-requests', icon: DocumentTextIcon },
+    { name: 'Clients', href: '/dashboard/clients', icon: UserGroupIcon, roles: ['admin', 'superadmin'] },
     { name: 'Contests', href: '/dashboard/contests', icon: TrophyIcon },
-    { name: 'Clients', href: '/dashboard/clients', icon: UserGroupIcon },
     { name: 'Analytics', href: '/dashboard/analytics', icon: ChartBarIcon },
     { name: 'Settings', href: '/dashboard/settings', icon: CogIcon },
     { name: 'Profile', href: getProfilePath(), icon: UserIcon },
@@ -64,21 +69,17 @@ const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen }) => {
   // Client-specific navigation items
   const clientNavigation = [
     { name: 'Product Orders', href: '/dashboard/client-orders', icon: ShoppingBagIcon },
-    { name: 'Purchase Requests', href: '/dashboard/client-purchase-requests', icon: ClipboardDocumentListIcon },
+    { name: 'Admin Products', href: '/dashboard/admin-products-catalog', icon: CubeIcon },
+    { name: 'Purchase Requests', href: '/dashboard/client-purchase-requests', icon: InboxIcon },
     { name: 'Dealer Slots', href: '/dashboard/dealer-slots', icon: TagIcon },
     { name: 'Dealers', href: '/dashboard/dealers', icon: UsersIcon },
   ];
 
   // Dealer-specific navigation items
-  const dealerNavigation = [
-    { name: 'Product Catalog', href: '/dashboard/dealer-catalog', icon: ShoppingBagIcon },
-  ];
+  const dealerNavigation: typeof navigation = [];
 
-  // Admin-specific navigation items
-  const adminNavigation = [
-    { name: 'Admin Management', href: '/dashboard/admin', icon: BuildingStorefrontIcon },
-    { name: 'Purchase Requests', href: '/dashboard/purchase-requests', icon: ShoppingBagIcon },
-  ];
+  // Admin-specific navigation items - keep empty, items moved to main navigation
+  const adminNavigation: typeof navigation = [];
 
   // SuperAdmin-specific navigation items
   const superAdminNavigation = [
@@ -94,20 +95,21 @@ const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen }) => {
     if (isSuperAdmin) {
       return ['Dashboard'].includes(item.name);
     }
-    if (isAdmin) return true; // Admin sees everything
+    if (isAdmin) {
+      // Admin sees specific navigation items
+      return ['Dashboard', 'Admin Management', 'Products', 'Inventory', 'Orders', 'Purchase Requests', 'Clients', 'Contests', 'Analytics', 'Settings', 'Profile'].includes(item.name);
+    }
     if (isClient) {
-      return ['Dashboard', 'Products', 'Orders', 'Inventory', 'Profile', 'Settings'].includes(item.name);
+      return ['Dashboard', 'Orders', 'Client Inventory', 'Profile', 'Settings'].includes(item.name);
     }
     if (isDealer) {
-      return ['Dashboard', 'Products', 'Orders', 'Clients', 'Profile', 'Settings'].includes(item.name);
+      return ['Dashboard', 'Orders', 'Clients', 'Profile', 'Settings'].includes(item.name);
     }
     return false;
   });
 
   let navItems = filteredNavigation;
-  if (isAdmin) {
-    navItems = [...navItems, ...adminNavigation];
-  } else if (isSuperAdmin) {
+  if (isSuperAdmin) {
     navItems = [...navItems, ...superAdminNavigation];
   } else if (isClient) {
     navItems = [...navItems, ...clientNavigation];

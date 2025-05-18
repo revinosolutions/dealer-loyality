@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
-import { Product, getProducts } from '../services/productsApi';
+import { Product, getProducts, updateProductInventory } from '../services/productsApi';
 import { toast } from 'react-hot-toast';
 
 export type InventoryItem = {
@@ -104,8 +104,14 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // For admin users, don't apply any filters
       // For client users, filter by createdBy
       const filters = user.role === 'admin' 
-        ? {} 
-        : { createdBy: user.id };
+        ? { 
+            adminView: true,
+            _t: Date.now() // Add timestamp to prevent caching
+          } 
+        : { 
+            createdBy: user.id,
+            _t: Date.now() // Add timestamp to prevent caching
+          };
       
       console.log('Using filters for inventory products:', filters);
       const response = await getProducts(filters);
@@ -141,7 +147,22 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLoading(true);
     setError(null);
     try {
-      // In a real implementation, you would call an API to update the inventory
+      console.log('InventoryContext: Updating inventory item:', { id, updates });
+      
+      // Convert InventoryItem to Product update format
+      const productUpdates = {
+        currentStock: updates.quantity !== undefined ? updates.quantity : updates.availableQuantity,
+        reorderLevel: updates.reorderLevel,
+        reservedStock: updates.reservedQuantity
+      };
+      
+      console.log('InventoryContext: Converted to product updates:', productUpdates);
+      
+      // Call the actual API to update inventory
+      const updatedProduct = await updateProductInventory(id, productUpdates);
+      console.log('InventoryContext: Server response:', updatedProduct);
+      
+      // Also update local state
       setInventory(prev => {
         return prev.map(item => {
           if (item.id === id) {
@@ -161,6 +182,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return item;
         });
       });
+      
       toast.success('Inventory updated successfully');
     } catch (err) {
       console.error('Error updating inventory:', err);

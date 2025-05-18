@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import authService, { User as AuthUser, LoginData, RegisterData, ProfileUpdateData } from '../services/authService';
+import { checkAndRefreshToken } from '../utils/authTokenRefresherESM';
 
 // Define user roles
 // superadmin: Platform owner (Revino) who manages all manufacturers/admins
@@ -109,45 +110,224 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
+  // Load user from localStorage synchronously to prevent UI flicker
+  useEffect(() => {
+    const storedToken = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('user');
+    
+    if (storedToken) {
+      console.log('Initial token load from localStorage');
+      setToken(storedToken);
+    }
+    
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        console.log('Initial user load from localStorage:', parsedUser?.email);
+        setUser(convertAuthUser(parsedUser));
+      } catch (e) {
+        console.error('Error parsing stored user:', e);
+      }
+    }
+  }, []);
+  
   // Check for existing auth on mount
   useEffect(() => {
     const initAuth = async () => {
-      setIsLoading(true);
+      // Don't set loading to true if we already have a user from localStorage
+      if (!user) {
+        setIsLoading(true);
+      }
       
       try {
         // Check if we have a stored token and user
-        if (authService.isAuthenticated()) {
-          // Get the stored token
-          const storedToken = localStorage.getItem('token');
+        const storedToken = localStorage.getItem('token');
+        
+        if (storedToken) {
+          console.log('Found token in localStorage, attempting to initialize auth');
           setToken(storedToken);
           
+          // Load user from localStorage immediately to prevent UI flicker
           const storedUser = authService.getStoredUser();
-          
           if (storedUser) {
+            console.log('Found user data in localStorage, setting initial state');
             setUser(convertAuthUser(storedUser));
-            // Optionally refresh user data from server
-            try {
-              const freshUser = await authService.getCurrentUser();
-              setUser(convertAuthUser(freshUser));
-            } catch (refreshError) {
-              console.error('Error refreshing user data:', refreshError);
-              // Continue with stored user data
+          }
+          
+          // Try to refresh the token first for improved reliability
+          let newToken = null;
+          try {
+            console.log('Auth context initializing, attempting to refresh token');
+            newToken = await checkAndRefreshToken();
+            
+            // If token was refreshed, update it
+            if (newToken) {
+              console.log('Token was refreshed during initialization');
+              setToken(newToken);
+            }
+          } catch (refreshTokenError) {
+            console.warn('Failed to refresh token during initialization:', refreshTokenError);
+            // Continue with the stored token - don't fail authentication yet
+          }
+          
+          // Try to get user data in multiple ways to ensure we have it
+          let userData = null;
+          
+          // 1. First try getting from localStorage if we haven't already
+          if (!storedUser) {
+            const localUser = authService.getStoredUser();
+            if (localUser) {
+              console.log('Found user data in localStorage');
+              userData = localUser;
+              setUser(convertAuthUser(localUser));
             }
           } else {
-            // We have a token but no user, try to get current user
-            const currentUser = await authService.getCurrentUser();
-            setUser(convertAuthUser(currentUser));
+            userData = storedUser;
           }
+          
+          // 2. Then try to refresh from server regardless
+          try {
+            console.log('Fetching fresh user data from server');
+            const freshUser = await authService.getCurrentUser();
+            
+            if (freshUser) {
+              console.log('Successfully fetched fresh user data');
+              userData = freshUser;
+              setUser(convertAuthUser(freshUser));
+              
+              // Update localStorage with the fresh data
+              localStorage.setItem('user', JSON.stringify(freshUser));
+            }
+          } catch (userError) {
+            console.error('Error fetching user data from server:', userError);
+            
+            // If we couldn't get fresh data but have stored data, use that
+            if (userData) {
+              console.log('Using stored user data as fallback');
+            } else {
+              // Try direct fetch as last resort
+              try {
+                console.log('Attempting direct fetch for user data as last resort');
+                const directResponse = await fetch('/api/auth/me', {
+                  headers: {
+                    'Authorization': `Bearer ${storedToken}`,
+                    'x-auth-token': storedToken
+                  }
+                });
+                
+                if (directResponse.ok) {
+                  const directUser = await directResponse.json();
+                  console.log('Direct fetch for user data succeeded');
+                  userData = directUser;
+                  setUser(convertAuthUser(directUser));
+                  localStorage.setItem('user', JSON.stringify(directUser));
+                } else {
+                  throw new Error(`Direct fetch failed: ${directResponse.status}`);
+                }
+              } catch (directError) {
+                console.error('Direct fetch for user data also failed:', directError);
+                // If we have no user data at all, this is an error state
+                console.error('No valid user data found with token');
+                throw new Error('Authentication failed - no valid user data found');
+              }
+            }
+          }
+          
+          // Final check - if we still don't have user data, authentication has failed
+          if (!userData) {
+            console.error('Failed to load user data despite having token');
+            throw new Error('Authentication failed - could not load user data');
+          }
+        } else {
+          console.log('No token found, user is not authenticated');
+          // Clear any stale user data if we don't have a token
+          localStorage.removeItem('user');
+          setUser(null);
         }
       } catch (err) {
         console.error('Auth initialization error:', err);
-        authService.logout();
+        // If anything fails, clear auth state completely, but keep token for direct API access
+        // Don't clear localStorage['token'] here
+        setUser(null);
       } finally {
         setIsLoading(false);
       }
     };
 
     initAuth();
+    
+    // Set up event listeners for token refresh events
+    const handleTokenRefreshed = (event: Event) => {
+      console.log('Received token-refreshed event, updating auth state');
+      
+      // Update token state from localStorage
+      const refreshedToken = localStorage.getItem('token');
+      if (refreshedToken && refreshedToken !== token) {
+        setToken(refreshedToken);
+        console.log('Updated token state after refresh event');
+      }
+      
+      // Check if user data needs to be updated
+      const storedUser = authService.getStoredUser();
+      if (storedUser) {
+        setUser(convertAuthUser(storedUser));
+        console.log('Updated user state after token refresh');
+      }
+    };
+    
+    // Handle auth invalidation event
+    const handleTokenInvalidated = (event: Event) => {
+      console.warn('Received token-invalid event, logging out');
+      authService.logout();
+      setUser(null);
+      setToken(null);
+      
+      // Don't redirect if already on login page
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login?session=expired';
+      }
+    };
+
+    // Handle auth warning event - don't immediately log out
+    const handleTokenWarning = (event: Event) => {
+      console.warn('Received token-warning event, attempting recovery');
+      
+      // Try to refresh the token after a delay
+      setTimeout(async () => {
+        try {
+          const newToken = await checkAndRefreshToken();
+          if (newToken) {
+            console.log('Successfully refreshed token after warning');
+            // Refresh user data
+            try {
+              const freshUser = await authService.getCurrentUser();
+              if (freshUser) {
+                setUser(convertAuthUser(freshUser));
+                console.log('Successfully refreshed user data after warning');
+              }
+            } catch (userError) {
+              console.error('Failed to refresh user data after warning:', userError);
+            }
+          } else {
+            console.warn('Failed to refresh token after warning');
+          }
+        } catch (refreshError) {
+          console.error('Error refreshing token after warning:', refreshError);
+        }
+      }, 3000);
+    };
+    
+    // Register event listeners
+    window.addEventListener('auth-token-refreshed', handleTokenRefreshed);
+    window.addEventListener('auth-token-invalid', handleTokenInvalidated);
+    window.addEventListener('auth-token-warning', handleTokenWarning);
+    
+    // Clean up event listeners
+    return () => {
+      window.removeEventListener('auth-token-refreshed', handleTokenRefreshed);
+      window.removeEventListener('auth-token-invalid', handleTokenInvalidated);
+      window.removeEventListener('auth-token-warning', handleTokenWarning);
+    };
   }, []);
 
   const login = async (data: LoginData) => {
@@ -156,6 +336,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     try {
       console.log('Attempting login with:', { email: data.email });
+      
+      // Clear any previous auth redirect flag
+      sessionStorage.removeItem('auth_redirect');
+      
       const response = await authService.login(data);
       
       console.log('Login successful:', response);

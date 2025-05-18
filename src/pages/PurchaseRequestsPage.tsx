@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { getClientPurchaseRequests, PurchaseRequest } from '../services/productsApi';
 import { getPurchaseRequestNotifications, Notification } from '../services/notificationsApi';
-import { ShoppingBag, RefreshCw, AlertCircle, CheckCircle, XCircle, Clock, MessageSquare, Bell } from 'lucide-react';
+import { ShoppingBag, RefreshCw, AlertCircle, CheckCircle, XCircle, Clock, MessageSquare, Bell, LogIn } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 // Update the PurchaseRequest interface to include rejectionReason
 declare module '../services/productsApi' {
@@ -13,7 +14,8 @@ declare module '../services/productsApi' {
 }
 
 const PurchaseRequestsPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
@@ -22,36 +24,178 @@ const PurchaseRequestsPage: React.FC = () => {
   const [selectedRequest, setSelectedRequest] = useState<PurchaseRequest | null>(null);
   const [isReasonModalOpen, setIsReasonModalOpen] = useState(false);
 
+  // Wait for auth to finish loading before trying to fetch data
   useEffect(() => {
-    fetchRequests();
-  }, []);
-
-  useEffect(() => {
-    if (requests.length > 0) {
-      fetchNotifications();
+    if (!authLoading) {
+      if (isAuthenticated && user) {
+        fetchRequests();
+      } else if (!isAuthenticated) {
+        setError('You must be logged in to view purchase requests');
+        setLoading(false);
+      }
     }
-  }, [requests]);
-
+  }, [authLoading, isAuthenticated, user]);
   const fetchRequests = async () => {
-    if (!user || !user.id) {
-      setError('User not authenticated');
+    // Show loading state immediately
+    setLoading(true);
+    
+    // Enhanced client verification
+    const verifyClientUser = async () => {
+      // First check if user and ID exist in state
+      if (user && user.id) {
+        console.log('User authenticated from context, client ID:', user.id);
+        return user.id;
+      }
+      
+      // If not in context, check localStorage as backup
+      console.log('User not found in context, checking localStorage');
+      try {
+        const storedUserStr = localStorage.getItem('user');
+        if (storedUserStr) {
+          const storedUser = JSON.parse(storedUserStr);
+          if (storedUser && storedUser.id) {
+            console.log('User found in localStorage, ID:', storedUser.id);
+            return storedUser.id;
+          }
+        }
+      } catch (e) {
+        console.error('Error checking localStorage for user:', e);
+      }
+      
+      // Final check - see if there's a token but no user data
+      const token = localStorage.getItem('token');
+      if (token) {
+        console.log('Token found but no user data, attempting to refresh user info');
+        try {
+          // Make a direct API call to get current user
+          const response = await fetch('/api/auth/me', {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          
+          if (response.ok) {
+            const userData = await response.json();
+            if (userData && userData.id) {
+              console.log('Successfully retrieved user data from API');
+              localStorage.setItem('user', JSON.stringify(userData));
+              return userData.id;
+            }
+          }
+        } catch (apiError) {
+          console.error('Failed to retrieve user info from API:', apiError);
+        }
+      }
+      
+      // No valid user found
+      return null;
+    };
+    
+    // Get client ID using our enhanced verification
+    const clientId = await verifyClientUser();
+    
+    if (!clientId) {
+      console.error('No authenticated user found');
+      setError('User not authenticated. Please log in again.');
       setLoading(false);
+      // Redirect to login after a short delay
+      toast.error('Your session has expired. Please log in again.');
+      setTimeout(() => {
+        navigate('/login');
+      }, 2000);
       return;
     }
 
-    setLoading(true);
     try {
-      const response = await getClientPurchaseRequests(user.id);
-      console.log('Fetched purchase requests:', response.requests);
-      setRequests(response.requests);
-      setError(null);
-    } catch (err) {
+      console.log('Fetching purchase requests for client ID:', clientId);
+      // Add timestamp to prevent caching issues
+      const response = await getClientPurchaseRequests(clientId);
+      
+      // Handle different response formats (array or {requests: array})
+      if (!response) {
+        console.error('Empty response from getClientPurchaseRequests');
+        setRequests([]);
+        setError('Received empty data from server. Please try again.');
+      } else if (Array.isArray(response)) {
+        // Direct array response
+        console.log(`Fetched ${response.length} purchase requests (array format)`);
+        setRequests(response);
+        setError(null);
+        
+        // Fetch notifications after successful request fetch
+        fetchNotifications();
+        
+        // Cache the results in localStorage for emergency use
+        try {
+          localStorage.setItem('client_purchase_requests', JSON.stringify(response));
+          console.log('Cached client purchase requests to localStorage');
+        } catch (cacheError) {
+          console.warn('Failed to cache client purchase requests:', cacheError);
+        }
+      } else if (response && typeof response === 'object' && 'requests' in response) {
+        // Object with requests property
+        console.log(`Fetched ${response.requests.length} purchase requests (object format)`);
+        setRequests(response.requests);
+        setError(null);
+        
+        // Fetch notifications after successful request fetch
+        fetchNotifications();
+        
+        // Cache the results in localStorage for emergency use
+        try {
+          localStorage.setItem('client_purchase_requests', JSON.stringify(response.requests));
+          console.log('Cached client purchase requests to localStorage');
+        } catch (cacheError) {
+          console.warn('Failed to cache client purchase requests:', cacheError);
+        }
+      } else {
+        console.error('Invalid response format from getClientPurchaseRequests:', response);
+        setRequests([]);
+        setError('Received invalid data from server. Please try again.');
+      }
+    } catch (err: any) {
       console.error('Error fetching purchase requests:', err);
-      setError('Failed to load your purchase requests. Please try again later.');
+      setError(err.message || 'Failed to load your purchase requests. Please try again later.');
+      
+      // Handle authentication errors specifically
+      if (err.message?.includes('Authentication required') || 
+          (err.response && (err.response.status === 401 || err.response.status === 403))) {
+        toast.error('Your session has expired. Please log in again.');
+        setTimeout(() => {
+          navigate('/login');
+        }, 2000);
+      }
+      
+      // Try to load from cache if available
+      try {
+        const cachedRequests = localStorage.getItem('client_purchase_requests');
+        if (cachedRequests) {
+          const parsedRequests = JSON.parse(cachedRequests);
+          console.log(`Loaded ${parsedRequests.length} cached purchase requests`);
+          setRequests(parsedRequests);
+          toast.success('Showing cached purchase requests while we try to reconnect');
+        }
+      } catch (cacheErr) {
+        console.error('Failed to load cached requests:', cacheErr);
+      }
     } finally {
       setLoading(false);
     }
   };
+  
+  // Add auto-refresh functionality
+  useEffect(() => {
+    // Set up an interval to refresh the requests every 30 seconds
+    const refreshInterval = setInterval(() => {
+      if (isAuthenticated && user) {
+        console.log('Auto-refreshing purchase requests...');
+        fetchRequests();
+      }
+    }, 30000); // 30 seconds
+    
+    // Clean up the interval when the component unmounts
+    return () => clearInterval(refreshInterval);
+  }, [isAuthenticated, user]);
 
   const fetchNotifications = async () => {
     if (!user || !user.id) return;
@@ -145,12 +289,34 @@ const PurchaseRequestsPage: React.FC = () => {
     ? requests
     : requests.filter(request => request.status === statusFilter);
 
-  if (!user || user.role !== 'client') {
+  // If authentication is still loading, show a loading state
+  if (authLoading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto"></div>
+        <p className="mt-2 text-gray-500">Verifying your access...</p>
+      </div>
+    );
+  }
+
+  // If not authenticated or wrong role, show access denied
+  if (!isAuthenticated || !user || user.role !== 'client') {
     return (
       <div className="text-center py-12 bg-yellow-50 rounded-lg border border-yellow-200">
         <AlertCircle size={48} className="mx-auto text-yellow-500" />
         <h3 className="mt-2 text-lg font-medium text-yellow-800">Access Restricted</h3>
-        <p className="mt-1 text-yellow-600">This page is only available for client users.</p>
+        <p className="mt-1 text-yellow-600">
+          {!isAuthenticated 
+            ? 'You must be logged in to access this page.' 
+            : 'This page is only available for client users.'}
+        </p>
+        <button
+          onClick={() => navigate('/login')}
+          className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+        >
+          <LogIn size={16} className="mr-2" />
+          Go to Login
+        </button>
       </div>
     );
   }
@@ -382,4 +548,4 @@ const PurchaseRequestsPage: React.FC = () => {
   );
 };
 
-export default PurchaseRequestsPage; 
+export default PurchaseRequestsPage;

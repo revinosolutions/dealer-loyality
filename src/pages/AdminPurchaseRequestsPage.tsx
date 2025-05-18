@@ -1,673 +1,823 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
-  getPurchaseRequests, 
-  approvePurchaseRequest, 
-  rejectPurchaseRequest, 
-  PurchaseRequest,
-  manuallyApprovePurchaseRequest,
-  directlyApprovePurchaseRequest,
-  reliableApprovePurchaseRequest
-} from '../services/productsApi';
-import { ShoppingBag, RefreshCw, AlertCircle, CheckCircle, XCircle, Clock, Bug } from 'lucide-react';
+  ShoppingCart, 
+  Check, 
+  X, 
+  Search, 
+  Filter, 
+  ChevronLeft, 
+  ChevronRight,
+  RefreshCcw,
+  Package,
+  ArrowDown,
+  ArrowUp
+} from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import {
+  getPurchaseRequests,
+  updatePurchaseRequestStatus,
+  PurchaseRequest as BasePurchaseRequest,
+  getPurchaseRequestStats
+} from '../services/purchaseRequestsApi';
+import { reliableApprovePurchaseRequest, rejectPurchaseRequest } from '../services/productsApi';
 import Modal from '../components/Modal';
-import { Link } from 'react-router-dom';
+
+// Extend the PurchaseRequest interface to include the properties we need
+interface PurchaseRequest extends BasePurchaseRequest {
+  productName?: string;
+  clientName?: string;
+  productId: string | any; // Can be string ID or populated object
+  clientId: string | any;  // Can be string ID or populated object
+}
+
+// Add this after imports - create a custom event for inventory updates
+const INVENTORY_UPDATE_EVENT = 'inventory-updated';
+
+// Create a function to trigger inventory refresh across components
+const triggerInventoryRefresh = () => {
+  console.log('[AdminPurchaseRequestsPage] Broadcasting inventory update event');
+  // Dispatch a custom event that other components can listen for
+  window.dispatchEvent(new CustomEvent(INVENTORY_UPDATE_EVENT));
+  // Also store a timestamp in localStorage to force refresh on page navigation
+  localStorage.setItem('lastInventoryUpdate', Date.now().toString());
+};
 
 const AdminPurchaseRequestsPage: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [stats, setStats] = useState({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    completed: 0,
+    total: 0
+  });
   
-  // Modal states
-  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  // Filters and pagination
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState<string>('pending');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [itemsPerPage] = useState(10);
+  
+  // Modal state
+  const [isActionModalOpen, setIsActionModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<PurchaseRequest | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [processing, setProcessing] = useState(false);
-
-  const [emergencyMockData, setEmergencyMockData] = useState<any>(null);
-  
-  // Listen for emergency approval success events
-  useEffect(() => {
-    const handleEmergencySuccess = (event: any) => {
-      console.log('Emergency approval success event received:', event.detail);
-      fetchRequests();
-    };
-    
-    // Listen for special force refresh events from status updates
-    const handleForceRefresh = () => {
-      console.log('Force refresh event received - refreshing purchase requests');
-      fetchRequests();
-    };
-    
-    window.addEventListener('emergency-approval-success', handleEmergencySuccess);
-    window.addEventListener('force-refresh-purchase-requests', handleForceRefresh);
-    
-    return () => {
-      window.removeEventListener('emergency-approval-success', handleEmergencySuccess);
-      window.removeEventListener('force-refresh-purchase-requests', handleForceRefresh);
-    };
-  }, []);
+  const [actionType, setActionType] = useState<'approve' | 'reject' | null>(null);
+  const [actionNote, setActionNote] = useState('');
 
   useEffect(() => {
-    fetchRequests();
-  }, []);
+    // Check if user is authenticated and is an admin
+    if (!user) return;
+    if (user.role !== 'admin') {
+      navigate('/dashboard');
+      return;
+    }
 
-  const fetchRequests = async () => {
-    setLoading(true);
+    fetchPurchaseRequests();
+    fetchStats();
+  }, [user, navigate, selectedStatus, currentPage]);
+
+  const fetchPurchaseRequests = async () => {
     try {
-      console.log('Admin fetching purchase requests...');
-      console.log('Admin user details:', {
-        id: user?.id,
-        role: user?.role,
-        organizationId: user?.organization?.id
-      });
+      setLoading(true);
+      setError(null);
+
+      // Prepare filters for the API call
+      const filters: any = {
+        page: currentPage,
+        limit: itemsPerPage,
+        _t: Date.now() // Prevent caching
+      };
+
+      // Add status filter if not "all"
+      if (selectedStatus !== 'all') {
+        filters.status = selectedStatus;
+      }
+
+      // Add organization filter if available
+      if (user?.organization?.id) {
+        filters.organizationId = user.organization.id;
+      }
+
+      console.log('Fetching purchase requests with filters:', filters);
+      const response = await getPurchaseRequests(filters);
       
-      // Add timestamp to prevent caching issues
-      const timestamp = new Date().getTime();
+      console.log(`Fetched ${response.requests?.length || 0} purchase requests`);
+      console.log('Purchase request data sample:', response.requests?.[0]);
       
-      // When called by an admin, this returns all requests from clients in their org
-      const response = await getPurchaseRequests({ _t: timestamp });
-      
-      console.log('Purchase requests API raw response:', response);
-      
-      if (response && response.requests) {
-        console.log(`Found ${response.requests.length} purchase requests`);
-        setRequests(response.requests);
+      // Log detailed structure of the first request to diagnose issues
+      if (response.requests?.[0]) {
+        const firstRequest = response.requests[0];
+        console.log('First request detailed structure:');
+        console.log('- _id:', firstRequest._id);
+        console.log('- productId:', firstRequest.productId);
+        console.log('- productName:', firstRequest.productName);
+        console.log('- clientId:', firstRequest.clientId);
+        console.log('- clientName:', firstRequest.clientName);
+        console.log('- product object:', firstRequest.product);
+        console.log('- client object:', firstRequest.client);
         
-        // Log each request for debugging
-        response.requests.forEach((req: PurchaseRequest, index: number) => {
-          console.log(`Request ${index + 1}:`, {
-            id: req._id,
-            product: req.productName,
-            client: req.clientName,
-            clientId: req.clientId,
-            status: req.status,
-            quantity: req.quantity,
-            price: req.price
-          });
-        });
-        
-        // Show success toast if requests were found
-        if (response.requests.length > 0) {
-          toast.success(`Found ${response.requests.length} purchase requests`);
+        // Check if productId/clientId are objects with properties
+        if (firstRequest.productId && typeof firstRequest.productId === 'object') {
+          console.log('- productId is an object with properties:');
+          console.log('  - name:', (firstRequest.productId as any).name);
+          console.log('  - sku:', (firstRequest.productId as any).sku);
         }
-      } else {
-        console.error('Invalid response format or empty requests array:', response);
-        setRequests([]);
-        toast.error('No purchase requests found. The response format may be invalid.');
+        
+        if (firstRequest.clientId && typeof firstRequest.clientId === 'object') {
+          console.log('- clientId is an object with properties:');
+          console.log('  - name:', (firstRequest.clientId as any).name);
+          console.log('  - email:', (firstRequest.clientId as any).email);
+        }
       }
       
-      setError(null);
-    } catch (err) {
+      // Validate response data
+      if (!response || !Array.isArray(response.requests)) {
+        console.error('Invalid purchase request response:', response);
+        setError('Received invalid data from server');
+        setRequests([]);
+        return;
+      }
+      
+      // Apply client-side search filter if needed
+      let filteredRequests = response.requests;
+      if (searchTerm.trim()) {
+        const search = searchTerm.toLowerCase();
+        filteredRequests = filteredRequests.filter((request: PurchaseRequest) => 
+          (request.product?.name || '').toLowerCase().includes(search) ||
+          (request.product?.sku || '').toLowerCase().includes(search) ||
+          (request.client?.name || '').toLowerCase().includes(search) ||
+          (request.client?.email || '').toLowerCase().includes(search)
+        );
+      }
+      
+      // Enrich request data for display
+      const enrichedRequests = filteredRequests.map((request: PurchaseRequest) => {
+        // Create product display data from productId (populated) or fall back to productName/productId
+        const productData = request.productId ? {
+          name: (request.productId as any).name || request.productName || 'Unknown Product',
+          sku: (request.productId as any).sku || 'N/A',
+          price: (request.productId as any).price || request.price || 0,
+          images: (request.productId as any).images || [],
+          category: (request.productId as any).category || ''
+        } : {
+          name: request.productName || 'Unknown Product',
+          sku: request.productId || 'Unknown',
+          price: request.price || 0
+        };
+
+        // Create client display data from clientId (populated) or fall back to clientName/clientId
+        const clientData = request.clientId ? {
+          name: (request.clientId as any).name || request.clientName || 'Unknown Client',
+          email: (request.clientId as any).email || 'N/A',
+          company: (request.clientId as any).company || ''
+        } : {
+          name: request.clientName || 'Unknown Client',
+          email: request.clientId || 'Unknown'
+        };
+
+        return {
+          ...request,
+          // Set product and client data
+          product: request.product || productData,
+          client: request.client || clientData,
+          // Format dates for display
+          createdAt: request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown',
+          updatedAt: request.updatedAt ? new Date(request.updatedAt).toLocaleString() : '-'
+        };
+      });
+      
+      setRequests(enrichedRequests);
+      
+      // Update pagination
+      if (response.pagination) {
+        const totalItems = response.pagination.total || enrichedRequests.length;
+        setTotalPages(Math.ceil(totalItems / itemsPerPage));
+      } else {
+        // Fallback pagination if not provided by API
+        setTotalPages(Math.ceil(enrichedRequests.length / itemsPerPage) || 1);
+      }
+    } catch (err: any) {
       console.error('Error fetching purchase requests:', err);
-      setError('Failed to load purchase requests. Please try again later.');
-      toast.error('Failed to load purchase requests. Please try refreshing.');
+      setError(err.message || 'Failed to load purchase requests');
+      setRequests([]); // Ensure we set an empty array to avoid rendering issues
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRefresh = () => {
-    toast.loading('Refreshing purchase requests...');
-    fetchRequests();
-  };
-
-  const handleApproveRequest = async (request: PurchaseRequest) => {
-    if (!request._id) {
-      toast.error('Purchase request has no ID');
-      return;
-    }
-    
-    setProcessing(true);
+  const fetchStats = async () => {
     try {
-      // Show starting toast
-      const loadingToast = toast.loading(`Processing purchase request for ${request.productName}...`);
-      
-      // NEW PRIMARY METHOD: Use the reliable approval route that properly handles inventory
-      try {
-        console.log('Method 1: Using reliable approval method...');
-        const response = await reliableApprovePurchaseRequest(request._id);
-        
-        toast.dismiss(loadingToast);
-        toast.success(
-          <div>
-            <p className="font-medium">Purchase request approved successfully</p>
-            <p className="text-xs text-green-600">
-              Product added to client inventory: {response.clientProduct?.stock} units
-            </p>
-          </div>,
-          { duration: 5000 }
-        );
-        
-        await fetchRequests();
-        return;
-      } catch (reliableError: any) {
-        console.error('Reliable method failed:', reliableError);
-        
-        // FALLBACK METHOD 1: Standard server-side approval 
-        toast.loading(
-          <div>
-            <p className="font-medium">Reliable approval failed</p>
-            <p className="text-xs text-gray-500">Trying standard approval method...</p>
-          </div>, 
-          { id: loadingToast }
-        );
-        
-        try {
-          console.log('Method 2: Trying standard approval method...');
-          const response = await approvePurchaseRequest(request._id);
-          
-          toast.dismiss(loadingToast);
-          toast.success(`Purchase request for ${request.productName} approved successfully`);
-          await fetchRequests();
-          return;
-        } catch (standardError: any) {
-          console.error('Method 2 failed:', standardError);
-          
-          // FALLBACK METHOD 2: Manual approval via PUT endpoint
-          toast.loading(
-            <div>
-              <p className="font-medium">Standard approval failed</p>
-              <p className="text-xs text-gray-500">Trying direct status update...</p>
-            </div>, 
-            { id: loadingToast }
-          );
-          
-          try {
-            console.log('Method 3: Trying manual approval...');
-            const manualResponse = await manuallyApprovePurchaseRequest(request._id);
-            
-            toast.dismiss(loadingToast);
-            
-            if (manualResponse.partialSuccess) {
-              toast.success(
-                <div>
-                  <p className="font-medium">Purchase request approved</p>
-                  <p className="text-xs text-amber-600">{manualResponse.message}</p>
-                </div>,
-                { duration: 5000 }
-              );
-            } else {
-              toast.success(`Purchase request approved successfully`, { duration: 4000 });
-            }
-            
-            await fetchRequests();
-            return;
-          } catch (manualError: any) {
-            console.error('Method 3 failed:', manualError);
-            
-            // FALLBACK METHOD 3: EMERGENCY - Completely bypass server approval
-            toast.loading(
-              <div>
-                <p className="font-medium">Manual approval failed</p>
-                <p className="text-xs text-red-500">Attempting emergency product creation...</p>
-              </div>, 
-              { id: loadingToast }
-            );
-            
-            try {
-              console.log('Method 4: Attempting emergency direct inventory update...');
-              const emergencyResponse = await directlyApprovePurchaseRequest(request);
-              
-              toast.dismiss(loadingToast);
-              
-              if (emergencyResponse.mockSuccess) {
-                // Show special UI for mock success
-                setEmergencyMockData(emergencyResponse.mockProduct);
-                
-                toast.success(
-                  <div>
-                    <p className="font-bold text-amber-700">⚠️ Emergency Mode Activated</p>
-                    <p className="text-xs mt-1">A placeholder product was created.</p>
-                    <p className="text-xs mt-1 text-amber-600">Manual admin action may be required.</p>
-                  </div>,
-                  { duration: 8000 }
-                );
-              } else {
-                // Show normal success for real product creation
-                toast.success(
-                  <div>
-                    <p className="font-bold text-amber-700">⚠️ Emergency Approval Completed</p>
-                    <p className="text-xs">Product added directly to client inventory</p>
-                    {emergencyResponse.statusUpdated ? (
-                      <p className="text-xs mt-1 text-green-600">Purchase request status updated to approved</p>
-                    ) : (
-                      <p className="text-xs mt-1 text-amber-600">Purchase request status remains unchanged.</p>
-                    )}
-                  </div>,
-                  { duration: 8000 }
-                );
-              }
-              
-              await fetchRequests();
-              return;
-            } catch (emergencyError: any) {
-              // All methods failed
-              console.error('Method 4 failed:', emergencyError);
-              
-              toast.dismiss(loadingToast);
-              
-              // Collect error details from all attempts
-              const reliableErrorDetail = reliableError.response?.data?.message || reliableError.message;
-              const standardErrorDetail = standardError.response?.data?.message || standardError.message;
-              const manualErrorDetail = manualError.message;
-              const emergencyErrorDetail = emergencyError.message;
-              
-              toast.error(
-                <div className="space-y-2">
-                  <p className="font-bold text-red-700">🚨 All approval methods failed</p>
-                  <div className="text-xs text-red-600 space-y-1">
-                    <p><b>Method 1 (Reliable):</b> {reliableErrorDetail}</p>
-                    <p><b>Method 2 (Standard):</b> {standardErrorDetail}</p>
-                    <p><b>Method 3 (Manual):</b> {manualErrorDetail}</p>
-                    <p><b>Method 4 (Emergency):</b> {emergencyErrorDetail}</p>
-                    <p className="pt-1 italic">Contact a system administrator for assistance.</p>
-                  </div>
-                </div>,
-                { duration: 10000 }
-              );
-            }
-          }
-        }
-      }
-    } catch (err: any) {
-      // Dismiss any loading toasts
-      toast.dismiss();
-      
-      console.error('Error approving request:', err);
-      
-      // Create detailed error message
-      let errorTitle = 'Failed to approve purchase request';
-      let errorDetails = '';
-      
-      // Extract the specific error message from the response if available
-      if (err.response?.data?.message) {
-        errorTitle = err.response.data.message;
-      }
-      
-      if (err.response?.data?.error) {
-        errorDetails = err.response.data.error;
-      } else if (err.message) {
-        errorDetails = err.message;
-      }
-      
-      // For MongoDB errors, add more details
-      if (err.response?.data?.name === 'MongoServerError') {
-        errorDetails += ` (${err.response.data.code})`;
-        
-        // Handle duplicate key errors specifically
-        if (err.response?.data?.code === 11000 && err.response?.data?.keyValue) {
-          const field = Object.keys(err.response.data.keyValue)[0];
-          errorDetails = `Duplicate ${field} value: ${err.response.data.keyValue[field]}`;
-        }
-      }
-      
-      // Show the detailed error message
-      toast.error(
-        <div>
-          <p className="font-bold">{errorTitle}</p>
-          {errorDetails && <p className="text-sm mt-1">{errorDetails}</p>}
-        </div>,
-        { duration: 5000 } // Show for 5 seconds
-      );
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleOpenRejectModal = (request: PurchaseRequest) => {
-    setSelectedRequest(request);
-    setRejectionReason('');
-    setIsRejectModalOpen(true);
-  };
-
-  const handleRejectRequest = async () => {
-    if (!selectedRequest?._id) return;
-    
-    if (!rejectionReason.trim()) {
-      toast.error('Please provide a reason for rejection');
-      return;
-    }
-    
-    setProcessing(true);
-    try {
-      await rejectPurchaseRequest(selectedRequest._id, rejectionReason);
-      toast.success('Purchase request rejected');
-      setIsRejectModalOpen(false);
-      await fetchRequests();
+      const organizationId = user?.organization?.id;
+      const response = await getPurchaseRequestStats(organizationId);
+      setStats(response);
     } catch (err) {
-      console.error('Error rejecting request:', err);
-      toast.error('Failed to reject purchase request');
-    } finally {
-      setProcessing(false);
+      console.error('Error fetching stats:', err);
+      // Do not set error state for stats to avoid blocking the main content
     }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const handleStatusChange = (status: string) => {
+    setSelectedStatus(status);
+    setCurrentPage(1); // Reset to first page when changing filters
   };
 
-  const getStatusBadge = (status: string) => {
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchPurchaseRequests();
+  };
+
+  const handlePageChange = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+  };
+
+  const openActionModal = (request: PurchaseRequest, action: 'approve' | 'reject') => {
+    setSelectedRequest(request);
+    setActionType(action);
+    setActionNote('');
+    setIsActionModalOpen(true);
+  };
+
+  const handleAction = async () => {
+    if (!selectedRequest || !actionType) return;
+    
+    try {
+      setLoading(true);
+      
+      if (actionType === 'approve') {
+        // Use the reliable approval method that handles inventory transfer
+        const response = await reliableApprovePurchaseRequest(selectedRequest._id as string);
+        
+        // Show success message with inventory update information
+        toast.success('Purchase request approved successfully');
+        
+        // Trigger inventory refresh for client components
+        triggerInventoryRefresh();
+        
+        // Show enhanced inventory update notification with more details and links
+        if (response?.adminProduct && response?.clientProduct) {
+          toast.custom((t) => (
+            <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 divide-y divide-gray-200`}>
+              <div className="p-4 pb-3">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0">
+                    <Check className="h-6 w-6 text-green-400" aria-hidden="true" />
+                  </div>
+                  <div className="ml-3 w-0 flex-1 pt-0.5">
+                    <p className="text-sm font-medium text-gray-900">Inventory Updated Successfully</p>
+                    <p className="mt-1 text-sm text-gray-500">
+                      The inventory has been updated based on the approved request.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-4">
+                <div className="flex">
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Admin Inventory</h4>
+                    <div className="bg-red-50 p-2 rounded-md border border-red-100 mb-2">
+                      <p className="text-xs font-medium text-red-700">
+                        {response.adminProduct.name}
+                      </p>
+                      <div className="mt-1 flex items-center">
+                        <ArrowDown size={14} className="text-red-500 mr-1" />
+                        <p className="text-sm font-semibold text-red-700">
+                          {response.adminProduct.previousStock} → {response.adminProduct.newStock} units
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Client Inventory</h4>
+                    <div className="bg-green-50 p-2 rounded-md border border-green-100">
+                      <p className="text-xs font-medium text-green-700">
+                        {response.clientProduct.name}
+                      </p>
+                      <div className="mt-1 flex items-center">
+                        <ArrowUp size={14} className="text-green-500 mr-1" />
+                        <p className="text-sm font-semibold text-green-700">
+                          {response.clientProduct.isNew ? '0' : (response.clientProduct.stock - selectedRequest.quantity)} → {response.clientProduct.stock} units
+                        </p>
+                      </div>
+                      <p className="text-xs text-green-600 mt-1">
+                        {response.clientProduct.isNew 
+                          ? 'New product created in client inventory' 
+                          : 'Existing product updated in client inventory'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-3 flex">
+                <button
+                  type="button"
+                  onClick={() => toast.dismiss(t.id)}
+                  className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ), { duration: 8000 });
+        }
+      } else {
+        // For rejection, use the reject API with rejection reason
+        await rejectPurchaseRequest(selectedRequest._id as string, actionNote);
+        toast.success('Purchase request rejected successfully');
+      }
+      
+      // Refresh data
+      fetchPurchaseRequests();
+      fetchStats();
+      
+      // Close modal
+      setIsActionModalOpen(false);
+      setSelectedRequest(null);
+      setActionType(null);
+      setActionNote('');
+    } catch (err: any) {
+      console.error(`Error ${actionType}ing request:`, err);
+      toast.error(err.message || `Failed to ${actionType} the request`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatusBadgeClass = (status: string) => {
     switch (status) {
       case 'pending':
-        return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-            <Clock size={12} className="mr-1" />
-            Pending
-          </span>
-        );
+        return 'bg-yellow-100 text-yellow-800';
       case 'approved':
-        return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-            <CheckCircle size={12} className="mr-1" />
-            Approved
-          </span>
-        );
+        return 'bg-green-100 text-green-800';
       case 'rejected':
-        return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-            <XCircle size={12} className="mr-1" />
-            Rejected
-          </span>
-        );
+        return 'bg-red-100 text-red-800';
+      case 'completed':
+        return 'bg-blue-100 text-blue-800';
       default:
-        return null;
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
-  const filteredRequests = statusFilter === 'all'
-    ? requests
-    : requests.filter(request => request.status === statusFilter);
-
-  if (!user || user.role !== 'admin') {
+  // Handle scenario where user is not yet loaded
+  if (!user) {
     return (
-      <div className="text-center py-12 bg-yellow-50 rounded-lg border border-yellow-200">
-        <AlertCircle size={48} className="mx-auto text-yellow-500" />
-        <h3 className="mt-2 text-lg font-medium text-yellow-800">Access Restricted</h3>
-        <p className="mt-1 text-yellow-600">This page is only available for admin users.</p>
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  // Redirect if not an admin
+  if (user.role !== 'admin') {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold text-red-600">Access Denied</h2>
+        <p className="mt-2">You do not have permission to view purchase requests.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Purchase Requests</h1>
-          <p className="text-gray-500 mt-1">
-            Manage client purchase requests
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          >
-            <option value="all">All Requests</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-          
-          <button
-            onClick={handleRefresh}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md flex items-center gap-2 hover:bg-indigo-700 transition-colors"
-            disabled={processing || loading}
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-            Refresh
-          </button>
-          
-          <Link
-            to="/dashboard/purchase-requests-debug"
-            className="px-4 py-2 bg-amber-600 text-white rounded-md flex items-center gap-2 hover:bg-amber-700 transition-colors"
-          >
-            <Bug size={16} />
-            Debug
-          </Link>
-        </div>
-      </div>
-      
-      {/* Loading state */}
-      {loading && (
-        <div className="text-center py-12">
-          <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto"></div>
-          <p className="mt-2 text-gray-500">Loading purchase requests...</p>
-        </div>
-      )}
-      
-      {/* Error state */}
-      {error && (
-        <div className="text-center py-12 bg-red-50 rounded-lg border border-red-200">
-          <AlertCircle size={48} className="mx-auto text-red-500" />
-          <h3 className="mt-2 text-lg font-medium text-red-800">{error}</h3>
-          <button 
-            onClick={fetchRequests}
-            className="mt-4 px-4 py-2 bg-red-100 text-red-800 hover:bg-red-200 rounded-md transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
-      )}
-      
-      {/* Empty state */}
-      {!loading && !error && filteredRequests.length === 0 && (
-        <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
-          <ShoppingBag size={48} className="mx-auto text-gray-400" />
-          <h3 className="mt-2 text-lg font-medium text-gray-900">No purchase requests found</h3>
-          <p className="mt-1 text-gray-500">
-            {requests.length === 0 
-              ? "No clients have submitted purchase requests yet" 
-              : "No requests match your current filter"}
-          </p>
-        </div>
-      )}
-      
-      {/* Requests List */}
-      {!loading && !error && filteredRequests.length > 0 && (
-        <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Product
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Client
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Quantity
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Price
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Notes
-                </th>
-                <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredRequests.map((request) => (
-                <tr key={request._id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="font-medium text-gray-900">{request.productName}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{request.clientName}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{request.quantity} units</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">${request.price?.toFixed(2) || '0.00'}</div>
-                    <div className="text-xs text-gray-500">Total: ${((request.price || 0) * request.quantity).toFixed(2)}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">
-                      {request.createdAt ? formatDate(request.createdAt) : 'N/A'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {getStatusBadge(request.status)}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-gray-500 max-w-xs truncate">
-                      {request.notes || 'No notes provided'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    {request.status === 'pending' && (
-                      <>
-                        <button
-                          onClick={() => handleApproveRequest(request)}
-                          disabled={processing}
-                          className="text-green-600 hover:text-green-900 mr-4"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleOpenRejectModal(request)}
-                          disabled={processing}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          Reject
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      
-      {/* Reject Modal */}
-      <Modal 
-        isOpen={isRejectModalOpen} 
-        onClose={() => setIsRejectModalOpen(false)}
-        title="Reject Purchase Request"
-      >
-        <div className="p-6">
-          <p className="text-gray-700 mb-4">
-            Please provide a reason for rejecting this purchase request:
-          </p>
-          
-          <textarea
-            value={rejectionReason}
-            onChange={(e) => setRejectionReason(e.target.value)}
-            className="w-full border border-gray-300 rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            rows={4}
-            placeholder="Enter rejection reason..."
-          />
-          
-          <div className="mt-6 flex justify-end space-x-3">
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Purchase Requests</h1>
+            <p className="text-gray-600">Manage purchase requests from clients</p>
+          </div>
+          <div className="mt-4 md:mt-0">
             <button
-              onClick={() => setIsRejectModalOpen(false)}
-              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-              disabled={processing}
+              onClick={() => {
+                setLoading(true);
+                fetchPurchaseRequests();
+                fetchStats();
+              }}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
-              Cancel
-            </button>
-            <button
-              onClick={handleRejectRequest}
-              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-red-400"
-              disabled={processing}
-            >
-              {processing ? 'Processing...' : 'Reject Request'}
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              Refresh
             </button>
           </div>
         </div>
-      </Modal>
-      
-      {/* Emergency Mock Data Modal */}
-      {emergencyMockData && (
-        <Modal 
-          isOpen={!!emergencyMockData} 
-          onClose={() => setEmergencyMockData(null)}
-          title="Emergency Approval Details"
-        >
-          <div className="p-6 space-y-4">
-            <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
-              <h3 className="text-amber-800 font-bold flex items-center">
-                <AlertCircle size={18} className="mr-2" />
-                Emergency Approval Activated
-              </h3>
-              <p className="text-sm text-amber-700 mt-2">
-                The system was unable to complete the automatic approval process but has created a 
-                placeholder record. Please take the following manual steps:
-              </p>
-              <ol className="list-decimal pl-5 mt-2 text-sm text-amber-800 space-y-1">
-                <li>Verify the client has access to this product in their inventory</li>
-                <li>Manually update the purchase request status if needed</li>
-                <li>Adjust any stock levels in the admin inventory</li>
-              </ol>
-            </div>
-            
-            <div className="border rounded-md p-4">
-              <h4 className="font-semibold text-gray-700">Product Details:</h4>
-              <div className="mt-2 space-y-2 text-sm">
-                <div className="grid grid-cols-3 gap-2">
-                  <span className="text-gray-500">Name:</span>
-                  <span className="col-span-2 font-medium">{emergencyMockData.name}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <span className="text-gray-500">SKU:</span>
-                  <span className="col-span-2 font-mono text-xs">{emergencyMockData.sku}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <span className="text-gray-500">Stock:</span>
-                  <span className="col-span-2">{emergencyMockData.stock} units</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <span className="text-gray-500">Price:</span>
-                  <span className="col-span-2">${emergencyMockData.price}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <span className="text-gray-500">Client ID:</span>
-                  <span className="col-span-2 font-mono text-xs">{emergencyMockData.createdBy}</span>
-                </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
+            <h3 className="text-xs font-medium text-indigo-500 uppercase">Total</h3>
+            <p className="mt-1 text-2xl font-semibold text-indigo-800">{stats.total}</p>
+          </div>
+          <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-100">
+            <h3 className="text-xs font-medium text-yellow-500 uppercase">Pending</h3>
+            <p className="mt-1 text-2xl font-semibold text-yellow-800">{stats.pending}</p>
+          </div>
+          <div className="bg-green-50 p-4 rounded-lg border border-green-100">
+            <h3 className="text-xs font-medium text-green-500 uppercase">Approved</h3>
+            <p className="mt-1 text-2xl font-semibold text-green-800">{stats.approved}</p>
+          </div>
+          <div className="bg-red-50 p-4 rounded-lg border border-red-100">
+            <h3 className="text-xs font-medium text-red-500 uppercase">Rejected</h3>
+            <p className="mt-1 text-2xl font-semibold text-red-800">{stats.rejected}</p>
+          </div>
+          <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+            <h3 className="text-xs font-medium text-blue-500 uppercase">Completed</h3>
+            <p className="mt-1 text-2xl font-semibold text-blue-800">{stats.completed}</p>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <div className="w-full sm:w-64">
+            <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
+              Status
+            </label>
+            <div className="relative">
+              <select
+                id="status"
+                value={selectedStatus}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="completed">Completed</option>
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                <Filter className="h-4 w-4 text-gray-400" />
               </div>
             </div>
-            
-            <div className="flex justify-end space-x-3 pt-4">
+          </div>
+
+          <div className="w-full sm:flex-1">
+            <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
+              Search
+            </label>
+            <form onSubmit={handleSearch} className="relative">
+              <input
+                type="text"
+                id="search"
+                placeholder="Search by product name, SKU, or client name"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+              />
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-4 w-4 text-gray-400" />
+              </div>
+              <button type="submit" className="hidden">Search</button>
+            </form>
+          </div>
+        </div>
+
+        {/* Error state */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative mb-4">
+            <span className="block sm:inline">{error}</span>
+          </div>
+        )}
+
+        {/* Loading state */}
+        {loading && (
+          <div className="flex justify-center items-center h-40">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && !error && requests.length === 0 && (
+          <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+            <ShoppingCart className="h-12 w-12 text-gray-400 mx-auto" />
+            <h3 className="mt-2 text-lg font-medium text-gray-900">No purchase requests found</h3>
+            <p className="mt-1 text-gray-500">
+              {selectedStatus !== 'all' 
+                ? `There are no ${selectedStatus} purchase requests at this time.` 
+                : 'There are no purchase requests matching your filters.'}
+            </p>
+          </div>
+        )}
+
+        {/* Requests list */}
+        {!loading && !error && requests.length > 0 && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Product
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Client
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Quantity / Price
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {requests.map((request) => {
+                    // Extract product and client info for display
+                    const productName = 
+                      (request.productId && typeof request.productId === 'object' && (request.productId as any).name) ||
+                      request.product?.name || 
+                      request.productName || 
+                      'Unknown Product';
+                      
+                    const productSku = 
+                      (request.productId && typeof request.productId === 'object' && (request.productId as any).sku) ||
+                      request.product?.sku || 
+                      'N/A';
+                      
+                    const productImage = 
+                      (request.productId && typeof request.productId === 'object' && (request.productId as any).images?.length > 0 && (request.productId as any).images[0]) ||
+                      request.product?.images?.[0];
+                      
+                    const clientName = 
+                      (request.clientId && typeof request.clientId === 'object' && (request.clientId as any).name) ||
+                      request.client?.name || 
+                      request.clientName || 
+                      'Unknown Client';
+                      
+                    const clientEmail = 
+                      (request.clientId && typeof request.clientId === 'object' && (request.clientId as any).email) ||
+                      request.client?.email || 
+                      'No email';
+                    
+                    return (
+                      <tr key={request._id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className="h-10 w-10 flex-shrink-0 bg-gray-200 rounded-md flex items-center justify-center">
+                              {productImage ? (
+                                <img 
+                                  src={productImage} 
+                                  alt={productName} 
+                                  className="h-10 w-10 rounded-md object-cover"
+                                />
+                              ) : (
+                                <Package className="h-5 w-5 text-gray-400" />
+                              )}
+                            </div>
+                            <div className="ml-4">
+                              <div className="text-sm font-medium text-gray-900">
+                                {productName}
+                              </div>
+                              <div className="text-sm text-gray-500">
+                                SKU: {productSku}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {clientName}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {clientEmail}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {request.quantity} units
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            ${request.price?.toFixed(2) || '0.00'} per unit
+                          </div>
+                          <div className="text-sm font-medium text-gray-900">
+                            Total: ${(request.quantity * request.price).toFixed(2)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeClass(request.status)}`}>
+                            {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {new Date(request.createdAt || '').toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          {request.status === 'pending' && (
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => openActionModal(request, 'approve')}
+                                className="text-green-600 hover:text-green-900"
+                                title="Approve"
+                              >
+                                <Check className="h-5 w-5" />
+                              </button>
+                              <button
+                                onClick={() => openActionModal(request, 'reject')}
+                                className="text-red-600 hover:text-red-900"
+                                title="Reject"
+                              >
+                                <X className="h-5 w-5" />
+                              </button>
+                            </div>
+                          )}
+                          {request.status !== 'pending' && (
+                            <Link
+                              to={`/admin/purchase-requests/${request._id}`}
+                              className="text-indigo-600 hover:text-indigo-900"
+                            >
+                              View Details
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-white border-t border-gray-200 sm:px-6 mt-4">
+                <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-gray-700">
+                      Showing page <span className="font-medium">{currentPage}</span> of{' '}
+                      <span className="font-medium">{totalPages}</span>
+                    </p>
+                  </div>
+                  <div>
+                    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className={`relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium ${
+                          currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className="sr-only">Previous</span>
+                        <ChevronLeft className="h-5 w-5" />
+                      </button>
+                      
+                      {/* Page numbers */}
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(page => {
+                          // Show first page, last page, current page, and pages around current page
+                          return (
+                            page === 1 ||
+                            page === totalPages ||
+                            (page >= currentPage - 1 && page <= currentPage + 1)
+                          );
+                        })
+                        .map((page, index, array) => {
+                          // Add ellipsis if there's a gap in the sequence
+                          const showEllipsisBefore = index > 0 && array[index - 1] !== page - 1;
+                          const showEllipsisAfter = index < array.length - 1 && array[index + 1] !== page + 1;
+                          
+                          return (
+                            <React.Fragment key={page}>
+                              {showEllipsisBefore && (
+                                <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                  ...
+                                </span>
+                              )}
+                              
+                              <button
+                                onClick={() => handlePageChange(page)}
+                                className={`relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium ${
+                                  page === currentPage
+                                    ? 'z-10 bg-indigo-50 border-indigo-500 text-indigo-600'
+                                    : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                              >
+                                {page}
+                              </button>
+                              
+                              {showEllipsisAfter && (
+                                <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                  ...
+                                </span>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className={`relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium ${
+                          currentPage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className="sr-only">Next</span>
+                        <ChevronRight className="h-5 w-5" />
+                      </button>
+                    </nav>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Action Modal */}
+      {selectedRequest && (
+        <Modal
+          isOpen={isActionModalOpen}
+          onClose={() => setIsActionModalOpen(false)}
+          title={`${actionType === 'approve' ? 'Approve' : 'Reject'} Purchase Request`}
+        >
+          <div className="p-6">
+            <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+              {/* Extract product and client info for display */}
+              {(() => {
+                const productName = 
+                  (selectedRequest.productId && typeof selectedRequest.productId === 'object' && (selectedRequest.productId as any).name) ||
+                  selectedRequest.product?.name || 
+                  selectedRequest.productName || 
+                  'Unknown Product';
+                  
+                const clientName = 
+                  (selectedRequest.clientId && typeof selectedRequest.clientId === 'object' && (selectedRequest.clientId as any).name) ||
+                  selectedRequest.client?.name || 
+                  selectedRequest.clientName || 
+                  'Unknown Client';
+                
+                return (
+                  <>
+                    <div className="flex items-center mb-2">
+                      <div className="font-semibold text-gray-700">Product:</div>
+                      <div className="ml-2">{productName}</div>
+                    </div>
+                    <div className="flex items-center mb-2">
+                      <div className="font-semibold text-gray-700">Client:</div>
+                      <div className="ml-2">{clientName}</div>
+                    </div>
+                    <div className="flex items-center mb-2">
+                      <div className="font-semibold text-gray-700">Quantity:</div>
+                      <div className="ml-2">{selectedRequest.quantity} units</div>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="font-semibold text-gray-700">Total Price:</div>
+                      <div className="ml-2">${(selectedRequest.quantity * selectedRequest.price).toFixed(2)}</div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            <div className="mb-4">
+              <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">
+                {actionType === 'approve' ? 'Approval Notes (Optional)' : 'Rejection Reason'}
+              </label>
+              <textarea
+                id="notes"
+                value={actionNote}
+                onChange={(e) => setActionNote(e.target.value)}
+                required={actionType === 'reject'}
+                rows={3}
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                placeholder={actionType === 'approve' 
+                  ? "Add any notes about this approval" 
+                  : "Please provide a reason for rejection"}
+              />
+              {actionType === 'reject' && actionNote.trim() === '' && (
+                <p className="mt-1 text-xs text-red-500">Rejection reason is required</p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
               <button
-                onClick={() => {
-                  // Copy details to clipboard
-                  const details = JSON.stringify(emergencyMockData, null, 2);
-                  navigator.clipboard.writeText(details);
-                  toast.success('Product details copied to clipboard');
-                }}
-                className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
+                type="button"
+                onClick={() => setIsActionModalOpen(false)}
+                className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-                Copy Details
+                Cancel
               </button>
               <button
-                onClick={() => setEmergencyMockData(null)}
-                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700"
+                type="button"
+                onClick={handleAction}
+                disabled={loading || (actionType === 'reject' && actionNote.trim() === '')}
+                className={`py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                  actionType === 'approve'
+                    ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                    : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+                } focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed`}
               >
-                Acknowledge
+                {loading ? 'Processing...' : actionType === 'approve' ? 'Approve Request' : 'Reject Request'}
               </button>
             </div>
           </div>
@@ -677,4 +827,4 @@ const AdminPurchaseRequestsPage: React.FC = () => {
   );
 };
 
-export default AdminPurchaseRequestsPage; 
+export default AdminPurchaseRequestsPage;

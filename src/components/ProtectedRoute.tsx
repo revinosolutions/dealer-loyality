@@ -16,6 +16,11 @@ const ProtectedRoute: React.FC = () => {
       hasUser: !!user,
       userRole: user?.role || 'none'
     });
+    
+    // Clear redirect flag when component mounts
+    if (location.pathname !== '/login') {
+      sessionStorage.removeItem('auth_redirect');
+    }
   }, [isAuthenticated, isLoading, user, location.pathname]);
 
   // Show loading state while checking authentication
@@ -31,7 +36,21 @@ const ProtectedRoute: React.FC = () => {
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
     console.log('ProtectedRoute - Not authenticated, redirecting to login');
-    return <Navigate to="/login" replace />;
+    
+    // Prevent redirect loops by checking session storage
+    if (!sessionStorage.getItem('auth_redirect')) {
+      sessionStorage.setItem('auth_redirect', 'true');
+      return <Navigate to="/login" replace state={{ from: location }} />;
+    } else {
+      console.warn('ProtectedRoute - Preventing redirect loop to login');
+      // Just show a loading spinner instead of redirecting again
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center">
+          <LoadingSpinner size="lg" />
+          <p className="mt-4 text-gray-600">Verifying your authentication...</p>
+        </div>
+      );
+    }
   }
 
   // If authenticated, render the child routes

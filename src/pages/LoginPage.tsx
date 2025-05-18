@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, Mail, Lock, AlertCircle } from 'lucide-react';
+import { Trophy, Mail, Lock, AlertCircle, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -12,16 +12,27 @@ const LoginPage: React.FC = () => {
     password: '',
   });
   const [error, setError] = useState('');
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [showDemoOptions, setShowDemoOptions] = useState(false);
 
-  // Check if already authenticated
+  // Check if already authenticated and check for session expired parameter
   useEffect(() => {
-    if (isAuthenticated) {
-      // Force redirect
-      window.location.href = '/dashboard';
+    // Clear the auth redirect flag when loading login page
+    sessionStorage.removeItem('auth_redirect');
+    
+    // Check URL for session expired parameter
+    const searchParams = new URLSearchParams(location.search);
+    if (searchParams.has('session') && searchParams.get('session') === 'expired') {
+      setSessionExpired(true);
+      setError('Your session has expired. Please sign in again to continue.');
     }
-  }, [isAuthenticated]);
+    
+    // Only redirect if already authenticated
+    if (isAuthenticated && !isLoading) {
+      navigate('/dashboard');
+    }
+  }, [isAuthenticated, isLoading, navigate, location.search]);
 
   // Show auth errors
   useEffect(() => {
@@ -41,6 +52,7 @@ const LoginPage: React.FC = () => {
     if (error) {
       setError('');
       clearError();
+      setSessionExpired(false);
     }
   };
 
@@ -135,12 +147,20 @@ const LoginPage: React.FC = () => {
           </div>
           
           <form onSubmit={handleSubmit}>
-            {error && (
+            {sessionExpired ? (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-md flex items-start gap-2 text-amber-800">
+                <AlertTriangle size={18} className="mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-medium">Your session has expired</p>
+                  <p className="text-sm">For security reasons, you've been logged out. Please sign in again to continue.</p>
+                </div>
+              </div>
+            ) : error ? (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-center gap-2 text-red-800">
                 <AlertCircle size={18} />
                 <span>{error}</span>
               </div>
-            )}
+            ) : null}
             
             <div className="mb-6">
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">

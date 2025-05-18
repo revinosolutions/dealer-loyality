@@ -5,6 +5,8 @@ import { spawn } from 'child_process';
 const FRONTEND_PORT = 3000;
 const BACKEND_PORT = 5000;
 
+// Only use standard ports 3000 and 5000
+
 // Function to check if a port is in use (synchronous)
 function isPortInUse(port) {
   try {
@@ -133,4 +135,4 @@ function startApplication() {
 }
 
 // Run the application
-startApplication(); 
+startApplication();

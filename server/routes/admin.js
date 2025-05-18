@@ -1,8 +1,10 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import { authMiddleware, adminMiddleware, superAdminMiddleware, restrictSuperAdminCreatedAdmins } from '../middleware/auth.js';
+import { check, validationResult } from 'express-validator';
 
 const router = express.Router();
+const Product = mongoose.model('Product');
 
 // Create Settings Schema
 const settingsSchema = new mongoose.Schema({
@@ -196,15 +198,21 @@ router.post('/api-keys/generate', [authMiddleware, superAdminMiddleware, restric
 const calculateDbSize = async () => {
   try {
     // In a real implementation, this would query MongoDB for database stats
-    // For this example, we'll just return a mock size
+    // For this example, we'll just return a mock size based on the number of documents
     
-    // Get collections
-    const collections = await mongoose.connection.db.listCollections().toArray();
+    // Count documents in some key collections
+    const collections = ['users', 'organizations', 'products', 'orders', 'sales'];
+    let totalDocs = 0;
     
-    // For demo purposes only - generating a random-ish size based on collection count
-    const approximateSize = (collections.length * 0.25).toFixed(1) + ' GB';
+    for (const collection of collections) {
+      if (mongoose.connection.collections[collection]) {
+        totalDocs += await mongoose.connection.collections[collection].countDocuments();
+      }
+    }
     
-    return approximateSize;
+    // Basic calculation (very rough estimate)
+    const estimatedSizeMB = (totalDocs * 0.01).toFixed(2);
+    return `${estimatedSizeMB} MB`;
   } catch (error) {
     console.error('Error calculating DB size:', error);
     return 'Unknown';
@@ -291,6 +299,102 @@ router.get('/dashboard-stats', [authMiddleware, adminMiddleware], async (req, re
   } catch (err) {
     console.error('Get admin dashboard stats error:', err);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Product management endpoints for admin users
+router.get('/products', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Extract organization ID from the authenticated user
+    const organizationId = req.user.organizationId || req.user.organization;
+    
+    const products = await Product.find({ organizationId })
+      .sort({ createdAt: -1 });
+    
+    res.json({ products });
+  } catch (error) {
+    console.error('Error fetching admin products:', error);
+    res.status(500).json({ message: 'Server error while fetching products' });
+  }
+});
+
+router.post('/products', authMiddleware, adminMiddleware, [
+  check('name', 'Name is required').notEmpty(),
+  check('sku', 'SKU is required').notEmpty(),
+  check('price', 'Price must be a positive number').isFloat({ min: 0 }),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  try {
+    // Extract organization ID from the authenticated user
+    const organizationId = req.user.organizationId || req.user.organization;
+    
+    const newProduct = new Product({
+      ...req.body,
+      createdBy: req.user.id,
+      organizationId
+    });
+    
+    await newProduct.save();
+    res.status(201).json({ product: newProduct, message: 'Product created successfully' });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'A product with this SKU already exists' });
+    }
+    console.error('Error creating product:', error);
+    res.status(500).json({ message: 'Server error while creating product' });
+  }
+});
+
+router.put('/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Extract organization ID from the authenticated user
+    const organizationId = req.user.organizationId || req.user.organization;
+    
+    const updates = { ...req.body, updatedAt: Date.now() };
+    delete updates._id; // Remove _id if present to avoid immutable field error
+    
+    const product = await Product.findOneAndUpdate(
+      { _id: req.params.id, organizationId },
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+    
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found or you do not have permission to update it' });
+    }
+    
+    res.json({ product, message: 'Product updated successfully' });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    res.status(500).json({ message: 'Server error while updating product' });
+  }
+});
+
+router.delete('/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Extract organization ID from the authenticated user
+    const organizationId = req.user.organizationId || req.user.organization;
+    
+    const product = await Product.findOneAndDelete({
+      _id: req.params.id,
+      organizationId
+    });
+    
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found or you do not have permission to delete it' });
+    }
+    
+    // You may want to add additional logic here to handle related data
+    // For example, updating inventory records
+    
+    res.json({ message: 'Product deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({ message: 'Server error while deleting product' });
   }
 });
 

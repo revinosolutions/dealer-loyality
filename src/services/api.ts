@@ -1,9 +1,10 @@
 // API service for centralized API calls
 
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import config from '../config';
 
 // API configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';  // Base URL without /api suffix
+const API_BASE_URL = config.apiBaseUrl || '/api';
 
 // Debug response type that includes error information
 export interface ErrorResponse {
@@ -15,14 +16,15 @@ export interface ErrorResponse {
 }
 
 // Log the API base URL for debugging
-console.log('API Base URL:', API_BASE_URL);
+console.log('API BASE URL:', API_BASE_URL);
 
 // Flag to enable mock mode (for development when backend is not available)
 const USE_MOCK = false;
 
 // Create axios instance with default config
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  // Ensure we don't duplicate /api in the URL
+  baseURL: API_BASE_URL.replace(/\/api$/, ''), // Remove trailing /api if present
   headers: {
     'Content-Type': 'application/json',
   },
@@ -30,6 +32,9 @@ const api = axios.create({
   // Add timeout to prevent hanging requests
   timeout: 30000,
 });
+
+// Log the final baseURL for debugging
+console.log('Final baseURL:', api.defaults.baseURL);
 
 // Log the API instance configuration
 console.log('API instance configured with:', {
@@ -70,9 +75,21 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !window.location.pathname.includes('/login')) {
       console.warn('Authentication error detected. Token may be invalid.');
       
+      // Check if we already tried to refresh and got another 401
+      if (error.config?._isRetry) {
+        console.error('Token refresh failed, clearing auth and redirecting to login');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        if (!sessionStorage.getItem('auth_redirect')) {
+          sessionStorage.setItem('auth_redirect', 'true');
+          window.location.href = '/login';
+        }
+        return Promise.reject(error);
+      }
+      
       try {
         // Try to refresh the token
-        const refreshResponse = await axios.post(`${API_BASE_URL}/auth/refresh-token`, {}, {
+        const refreshResponse = await axios.post(`/api/auth/refresh-token`, {}, {
           withCredentials: true
         });
         
@@ -82,6 +99,7 @@ api.interceptors.response.use(
           
           // Retry the original request with new token
           error.config.headers.Authorization = `Bearer ${refreshResponse.data.token}`;
+          error.config._isRetry = true; // Mark that we're retrying to prevent loops
           return axios(error.config);
         }
       } catch (refreshError) {
@@ -89,9 +107,10 @@ api.interceptors.response.use(
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         
-        if (!window.sessionStorage.getItem('auth_error_shown')) {
-          window.sessionStorage.setItem('auth_error_shown', 'true');
-          alert('Your session has expired. Please log in again.');
+        // Use sessionStorage to prevent redirect loops
+        if (!sessionStorage.getItem('auth_redirect')) {
+          sessionStorage.setItem('auth_redirect', 'true');
+          console.warn('Session expired, redirecting to login page');
           window.location.href = '/login';
         }
       }
@@ -204,7 +223,7 @@ const handleMockRequest = (
             } else {
               resolve({ error: 'Contest not found' });
             }
-          } else if (method === 'POST' && id && action === 'approve') {
+          } else if (method === 'PUT' && id && action === 'approve') {
             const index = MOCK_DATA.contests.findIndex(c => c.id === id);
             if (index >= 0) {
               MOCK_DATA.contests[index].approvalStatus = 'approved';
@@ -216,7 +235,7 @@ const handleMockRequest = (
             } else {
               resolve({ error: 'Contest not found' });
             }
-          } else if (method === 'POST' && id && action === 'reject') {
+          } else if (method === 'PUT' && id && action === 'reject') {
             const index = MOCK_DATA.contests.findIndex(c => c.id === id);
             if (index >= 0) {
               MOCK_DATA.contests[index].approvalStatus = 'rejected';
@@ -331,7 +350,47 @@ const handleMockRequest = (
   });
 };
 
-// Generic API request function
+// Define an extended AxiosError type with our custom properties
+interface EnhancedAxiosError extends AxiosError {
+  serverError?: boolean;
+  endpoint?: string;
+  requestMethod?: string;
+  timestamp?: string;
+}
+
+// Log the API response error
+const handleApiError = (error: any, endpoint: string, method: string): any => {
+  if (axios.isAxiosError(error)) {
+    console.error(`API Error ${method} ${endpoint}:`, {
+      status: error.response?.status,
+      message: error.message,
+      data: error.response?.data
+    });
+    
+    // Add more context to the error
+    if (error.response?.status === 500) {
+      console.error('Server returned 500 error. This may indicate a backend issue.');
+      
+      // Enrich the error with additional information
+      const enhancedError = error as EnhancedAxiosError;
+      enhancedError.serverError = true;
+      enhancedError.endpoint = endpoint;
+      enhancedError.requestMethod = method;
+      enhancedError.timestamp = new Date().toISOString();
+      
+      // Log full error response for debugging
+      console.error('Full error response:', enhancedError);
+      
+      return enhancedError;
+    }
+  } else {
+    console.error(`Non-Axios error in API request to ${endpoint}:`, error);
+  }
+  return error;
+};
+
+// API request function - added explicit debug logging for inventory endpoints
+// API endpoints for purchase requests specifically need token check
 export const apiRequest = async <T>(
   endpoint: string,
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'GET',
@@ -339,48 +398,188 @@ export const apiRequest = async <T>(
   params?: any,
   customTimeout?: number
 ): Promise<T> => {
+  // Ensure endpoint starts with /api
+  const normalizedEndpoint = endpoint.startsWith('/api') 
+    ? endpoint 
+    : `/api${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  
+  console.log(`API Request: ${method} ${normalizedEndpoint}`);
   try {
     if (USE_MOCK) {
       console.log('Using mock API for:', endpoint);
       return handleMockRequest(endpoint, method, data, params) as Promise<T>;
     }
     
-    // Completely new approach to ensure proper endpoint formatting
+    // Add debug logging for inventory updates
+    if (endpoint.includes('inventory') && (method === 'PATCH' || method === 'PUT')) {
+      console.log('🔍 INVENTORY UPDATE REQUEST:', {
+        endpoint,
+        method,
+        data,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Add debug logging for product save/update operations
+    if ((method === 'POST' || method === 'PUT') && 
+        (endpoint.includes('products') || endpoint.includes('admin/products'))) {
+      console.log('🔍 PRODUCT SAVE/UPDATE REQUEST:', {
+        endpoint,
+        method,
+        hasData: !!data,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Fixed endpoint formatting to prevent duplicate /api/ prefixes
     let formattedEndpoint = endpoint;
     
-    // Remove any leading slashes and 'api/' prefix
+    // First, strip any existing /api/ prefix completely
+    if (formattedEndpoint.startsWith('/api/')) {
+      formattedEndpoint = formattedEndpoint.substring(5); // Skip '/api/'
+    } else if (formattedEndpoint.startsWith('api/')) {
+      formattedEndpoint = formattedEndpoint.substring(4); // Skip 'api/'
+    } else if (formattedEndpoint.startsWith('/api')) {
+      formattedEndpoint = formattedEndpoint.substring(4); // Skip '/api'
+    } else if (formattedEndpoint.startsWith('api')) {
+      formattedEndpoint = formattedEndpoint.substring(3); // Skip 'api'
+    }
+    
+    // Remove any leading slashes to standardize
     if (formattedEndpoint.startsWith('/')) {
       formattedEndpoint = formattedEndpoint.substring(1);
     }
     
-    if (formattedEndpoint.startsWith('api/')) {
-      formattedEndpoint = formattedEndpoint.substring(4);
-    }
-    
-    // Now add a single /api/ prefix
+    // Now add a single, consistent /api/ prefix
     formattedEndpoint = `/api/${formattedEndpoint}`;
+    
+    console.log(`Endpoint formatting: "${endpoint}" → "${formattedEndpoint}"`);
     
     // Fix any double slashes that might have been created
     formattedEndpoint = formattedEndpoint.replace(/\/+/g, '/');
     
-    // Make sure it starts with /api/
-    if (!formattedEndpoint.startsWith('/api/')) {
-      formattedEndpoint = `/api${formattedEndpoint}`;
-    }
-    
-    // Log the original and modified endpoint
+    // Log the original and modified endpoint for debugging
     console.log(`Endpoint formatting: "${endpoint}" → "${formattedEndpoint}"`);
     
-    // Get auth token directly for this request
-    const token = localStorage.getItem('token');
+    // Add extra debug logging for admin endpoints that were having issues
+    if (endpoint.includes('admin') || formattedEndpoint.includes('admin')) {
+      console.log('🔍 ADMIN ENDPOINT DEBUG:', {
+        original: endpoint,
+        formatted: formattedEndpoint
+      });
+    }
+
+  // Get auth token directly for this request
+  let token = localStorage.getItem('token');
+  
+  // For purchase requests endpoints, retry to get token or use a recovery approach
+  if (!token && (
+      endpoint.includes('purchase-requests') || 
+      endpoint.includes('client-purchase-requests') || 
+      endpoint.includes('admin-purchase-requests')
+  )) {
+    console.warn('No token found for purchase request API call, trying recovery options');
     
-    if (!token) {
-      console.error('No authentication token found', { endpoint: formattedEndpoint });
+    // Try to check for token again - sometimes there's a race condition
+    let updatedToken = localStorage.getItem('token');
+    
+    if (updatedToken) {
+      console.log('Token recovered on second attempt:', updatedToken.substring(0, 15) + '...');
+      // Use the updated token
+      const config: any = {
+        url: formattedEndpoint,
+        method,
+        data,
+        params,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${updatedToken}`,
+          'x-auth-token': updatedToken
+        },
+        timeout: customTimeout || 10000
+      };
       
-      // For non-auth endpoints, continue without token
-      if (!endpoint.includes('/auth/')) {
-        throw new Error('Authentication required - No token found');
+      try {
+        console.log('Request headers:', config.headers);
+        const response = await api.request(config);
+        console.log(`API Response from ${formattedEndpoint}:`, response.status, response.statusText);
+        return response.data;
+      } catch (innerError) {
+        throw innerError;
       }
+    } else {
+      // Check if user exists in localStorage
+      const storedUser = localStorage.getItem('user');
+      if (storedUser) {
+        console.log('User found in localStorage, proceeding with request but auth may fail');
+        
+        // Generate a temporary token for this request (this is a fallback mechanism)
+        const user = JSON.parse(storedUser);
+        if (user && user.id) {
+          console.log('Attempting to recover session for user:', user.id);
+          
+          // Try to trigger a session refresh
+          try {
+            const refreshResponse = await fetch('/api/auth/refresh-token', {
+              method: 'POST',
+              credentials: 'include'
+            });
+            
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              if (refreshData.token) {
+                const refreshedToken = refreshData.token;
+                localStorage.setItem('token', refreshedToken);
+                console.log('Successfully refreshed token');
+                
+                // Use the refreshed token for this request
+                const configWithRefreshedToken: any = {
+                  url: formattedEndpoint,
+                  method,
+                  data,
+                  params,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${refreshedToken}`,
+                    'x-auth-token': refreshedToken
+                  },
+                  timeout: customTimeout || 10000
+                };
+                
+                try {
+                  console.log('Request headers with refreshed token:', configWithRefreshedToken.headers);
+                  const response = await api.request(configWithRefreshedToken);
+                  console.log(`API Response from ${formattedEndpoint}:`, response.status, response.statusText);
+                  return response.data;
+                } catch (innerError) {
+                  throw innerError;
+                }
+              }
+            }
+          } catch (refreshError) {
+            console.error('Failed to refresh token:', refreshError);
+          }
+        }
+      } else {
+        console.error('No user data found in localStorage');
+        throw new Error('Authentication required - No user data found');
+      }
+    }
+    } else if (!token && !endpoint.includes('/auth/')) {
+      console.error('No authentication token found', { endpoint: formattedEndpoint });
+      // Try to recover auth from localStorage if possible
+      try {
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          console.warn('User found in localStorage but no token available');
+          // Redirect to login with a clear message
+          window.location.href = '/login?sessionExpired=true';
+          throw new Error('Session expired. Please login again.');
+        }
+      } catch (e) {
+        console.error('Failed to check localStorage for user data', e);
+      }
+      throw new Error('Authentication required - No token found');
     }
     
     // Log more detailed information about the request
@@ -405,6 +604,71 @@ export const apiRequest = async <T>(
       timeout: customTimeout || 10000 // Use custom timeout if provided
     };
     
+    // For product save operations, ensure we use a longer timeout
+    if ((method === 'POST' || method === 'PUT') && 
+        (endpoint.includes('products') || endpoint.includes('admin/products'))) {
+      config.timeout = 30000; // 30 seconds for product saves
+      
+      // Fix any double /api/ paths that might still occur
+      if (config.url.includes('/api/api/')) {
+        config.url = config.url.replace('/api/api/', '/api/');
+        console.log(`Fixed product save URL path: ${config.url}`);
+      }
+    }
+    
+    // Extra debugging for URL paths having issues
+    if (endpoint.includes('purchase-requests')) {
+      console.log('Final request URL for purchase requests:', config.url);
+      console.log('Params:', params);
+    }
+    
+    // Add special debug logging for products endpoint
+    if (endpoint.includes('products') && !endpoint.includes('purchase-requests')) {
+      console.log('Products API request URL:', config.url);
+      console.log('Products API request params:', params);
+      
+      // Fix double api path issue - critical fix
+      if (config.url.includes('/api/api/')) {
+        const fixedUrl = config.url.replace('/api/api/', '/api/');
+        console.log(`Fixed double API path: ${config.url} → ${fixedUrl}`);
+        config.url = fixedUrl;
+      }
+      
+      // Special handling for admin product requests - without custom headers that might trigger CORS
+      if (params && params.adminView === true) {
+        console.log('Processing admin product request with special handling');
+        // No custom headers - they cause CORS issues
+        // Just use longer timeout for admin requests
+        config.timeout = 20000; // 20 seconds for admin product requests
+      }
+    }
+    
+    // Special handling for admin product requests
+    if (endpoint.includes('admin/products')) {
+      console.log('🔍 ADMIN PRODUCTS REQUEST DEBUG:', {
+        endpoint,
+        method,
+        params,
+        hasData: !!data
+      });
+      
+      // Ensure longer timeout for admin requests
+      config.timeout = 30000; // 30 seconds timeout
+      
+      // Fix double api path issue specifically for admin products
+      if (config.url.includes('/api/api/')) {
+        const fixedUrl = config.url.replace('/api/api/', '/api/');
+        console.log(`Fixed double API path for admin products: ${config.url} → ${fixedUrl}`);
+        config.url = fixedUrl;
+      }
+      
+      // Skip adding the special header that might cause issues
+      // config.headers['X-Admin-Request'] = 'true';
+      
+      // Log more context about the admin request
+      console.log('Admin Products Request Headers:', config.headers);
+    }
+    
     // Only add Authorization header if token exists
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -425,42 +689,41 @@ export const apiRequest = async <T>(
       
       return response.data;
     } catch (error: any) {
-      console.error(`API Error: ${error.response?.status} ${error.response?.data?.message || error.message}`);
-      console.error('Full error response:', error.response?.data);
+      // Enhanced error handling with more context
+      const enhancedError = handleApiError(error, formattedEndpoint, method);
       
-      // Enhanced error logging for product requests
-      if (endpoint.includes('product-requests')) {
-        console.error('Product request error details:', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          config: error.config
-        });
+      // Special handling for 500 errors
+      if (axios.isAxiosError(error) && error.response?.status === 500) {
+        console.log('Attempting alternative approach for 500 error...');
         
-        // For debug endpoint, don't throw the error but return an error object instead
-        if (endpoint.includes('debug-admin') && error.response?.status === 500) {
-          console.warn('Recovering from 500 error in debug endpoint and returning error object instead');
-          return {
-            error: true,
-            message: error.response?.data?.message || 'Internal server error',
-            status: error.response?.status,
-            details: error.response?.data || {},
-            requests: []
-          } as unknown as T;
+        // Try with a direct fetch for GET requests as a fallback
+        if (method === 'GET') {
+          try {
+            console.log('Attempting direct fetch fallback for 500 error...');
+            const token = localStorage.getItem('token');
+            if (!token) throw new Error('No token available for direct fetch');
+            
+            const directResponse = await fetch(formattedEndpoint, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              }
+            });
+            
+            if (directResponse.ok) {
+              console.log('Direct fetch fallback successful');
+              const data = await directResponse.json();
+              return data;
+            }
+          } catch (directFetchError) {
+            console.error('Direct fetch fallback also failed:', directFetchError);
+          }
         }
       }
       
-      // Handle token validation issues
-      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-        console.error('Authentication error. Token may be invalid or expired.');
-        
-        if (error.response.data?.message?.includes('User not found') || 
-            error.response.data?.message?.includes('Token is valid, but user no longer exists')) {
-          console.log('Consider logging out and logging in again to refresh the token');
-        }
-      }
-      
-      throw error;
+      console.error('API Request error:', enhancedError);
+      throw enhancedError;
     }
   } catch (error: any) {
     console.error('API Request error:', error);
@@ -580,10 +843,41 @@ export const usersApi = {
 
 // Empty data instead of mock data
 const MOCK_DATA = {
-  products: [],
-  clients: [],
-  orders: [],
-  inventory: []
+  products: [] as any[],
+  clients: [] as any[],
+  orders: [] as any[],
+  inventory: [] as any[],
+  contests: [] as any[]
+};
+
+// API endpoints for products (added explicit implementation)
+export const productsApi = {
+  getAll: (params?: any) => apiRequest('/products', 'GET', undefined, params),
+  getAllAdmin: (params?: any) => {
+    console.log('Getting all products for admin with params:', params);
+    // Force the correct path to avoid double /api/ issues
+    // Always exclude client products from admin products view
+    return apiRequest('/admin/products', 'GET', undefined, {
+      ...params, 
+      adminView: true,
+      isClientUploaded: false // Explicitly exclude client products
+    });
+  },
+  getById: (id: string) => apiRequest(`/products/${id}`, 'GET'),
+  getByIdAdmin: (id: string) => apiRequest(`/admin/products/${id}`, 'GET'),
+  create: (data: any) => {
+    console.log('Creating product with data:', data);
+    // Ensure we're using the correct endpoint
+    return apiRequest('/admin/products', 'POST', data);
+  },
+  update: (id: string, data: any) => {
+    console.log('Updating product with ID:', id, 'and data:', data);
+    // Ensure we're using the correct endpoint
+    return apiRequest(`/admin/products/${id}`, 'PUT', data);
+  },
+  delete: (id: string) => apiRequest(`/admin/products/${id}`, 'DELETE'),
+  updateStatus: (id: string, status: string) => 
+    apiRequest(`/admin/products/${id}/status`, 'PUT', { status }),
 };
 
 export const updateSuperAdminProfile = async (data: any) => {

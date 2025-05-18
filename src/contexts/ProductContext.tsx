@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 import { useNotifications, NotificationType, NotificationPriority, NotificationStatus } from './NotificationContext';
+import * as productsApi from '../services/productsApi';
 
 // Define product category type
 export type ProductCategory = {
@@ -51,7 +52,8 @@ type ProductContextType = {
   getProductById: (id: string) => Product | undefined;
   createProduct: (product: Omit<Product, '_id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updateProduct: (id: string, data: Partial<Product>) => Promise<void>;
-  deleteProduct: (id: string) => Promise<void>;
+  deleteProduct: (id: string) => Promise<any>;
+  fetchProducts: () => Promise<any>;
   getCategories: () => ProductCategory[];
   createCategory: (category: Omit<ProductCategory, '_id'>) => Promise<void>;
   updateCategory: (id: string, data: Partial<ProductCategory>) => Promise<void>;
@@ -124,6 +126,56 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [categories, setCategories] = useState<ProductCategory[]>(mockCategories);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch products from API
+  const fetchProducts = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      console.log('Fetching products from API...');
+      const response = await productsApi.getProducts({});
+      console.log('Products fetched successfully:', response);
+      
+      if (response && response.products) {
+        // Map API products to match our Product type
+        const mappedProducts = response.products.map((apiProduct: any) => {
+          // Create a product object that matches our Product type
+          const product: Product = {
+            _id: apiProduct._id,
+            name: apiProduct.name || '',
+            sku: apiProduct.sku || '',
+            description: apiProduct.description || '',
+            categories: apiProduct.category ? [apiProduct.category] : [],
+            pricing: {
+              manufacturerPrice: apiProduct.price || 0,
+              suggestedClientPrice: apiProduct.price ? apiProduct.price * 1.2 : 0,
+              suggestedRetailPrice: apiProduct.price ? apiProduct.price * 1.5 : 0,
+            },
+            inventory: {
+              currentStock: apiProduct.stock || 0,
+              reorderLevel: apiProduct.reorderLevel || 5,
+              reservedStock: apiProduct.reservedStock || 0,
+            },
+            images: apiProduct.images || [],
+            status: apiProduct.status as ProductStatus || 'active',
+            createdAt: apiProduct.createdAt || new Date().toISOString(),
+            updatedAt: apiProduct.updatedAt || new Date().toISOString(),
+          };
+          return product;
+        });
+        
+        setProducts(mappedProducts);
+      }
+      
+      return response;
+    } catch (err) {
+      console.error('Error fetching products:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch products');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Get all products with optional filters
   const getProducts = (filters?: { category?: string; status?: ProductStatus; search?: string }) => {
@@ -319,23 +371,28 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
         throw new Error('Only administrators can delete products');
       }
 
-      // Remove from state
-      setProducts(products.filter(product => product._id !== id));
-
-      // In a real app, we would make an API call here
-      // const response = await fetch(`/api/products/${id}`, {
-      //   method: 'DELETE',
-      //   headers: {
-      //     'Authorization': `Bearer ${localStorage.getItem('token')}`,
-      //   },
-      // });
-      // 
-      // if (!response.ok) {
-      //   const errorData = await response.json();
-      //   throw new Error(errorData.message || 'Failed to delete product');
-      // }
+      console.log(`Deleting product with ID: ${id}`);
+      
+      // Immediately remove the product from the state to give instant feedback
+      setProducts(prevProducts => prevProducts.filter(product => product._id !== id));
+      
+      // Make the API call to delete the product
+      const response = await productsApi.deleteProduct(id);
+      console.log('Product deletion response:', response);
+      
+      // Force a refresh of the products list to ensure consistency with the backend
+      await fetchProducts();
+      
+      return response;
     } catch (err) {
+      console.error('Error deleting product:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
+      
+      // If the deletion fails, refresh the products list to restore the product
+      fetchProducts().catch(refreshErr => {
+        console.error('Failed to refresh products after deletion error:', refreshErr);
+      });
+      
       throw err;
     } finally {
       setLoading(false);
@@ -545,6 +602,10 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
   const value = {
     products,
     categories,
@@ -555,6 +616,7 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
     createProduct,
     updateProduct,
     deleteProduct,
+    fetchProducts,
     getCategories,
     createCategory,
     updateCategory,

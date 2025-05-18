@@ -14,6 +14,8 @@
     "dev:both": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "start:both": "concurrently \"npm run start\" \"npm run server\"",
     "start:fixed": "node start-fixed-ports.js",
+    "start:combined": "node start-combined.js",
+    "fix:client-auth": "node -e \"require('./src/fixClientAuth.js')\"",
     "debug:mongodb": "node scripts/debug-mongodb.js",
     "db:delete-all": "node scripts/delete-all-data.js",
     "db:drop": "node scripts/drop-database.js",
@@ -61,6 +63,7 @@
     "eslint-plugin-react-refresh": "^0.4.5",
     "nodemon": "^3.0.3",
     "postcss": "^8.4.35",
+    "postcss-import": "^16.1.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
     "vite": "^5.1.3"
