@@ -253,85 +253,125 @@ const AdminPurchaseRequestsPage: React.FC = () => {
       
       if (actionType === 'approve') {
         // Use the reliable approval method that handles inventory transfer
-        const response = await reliableApprovePurchaseRequest(selectedRequest._id as string);
-        
-        // Show success message with inventory update information
-        toast.success('Purchase request approved successfully');
-        
-        // Trigger inventory refresh for client components
-        triggerInventoryRefresh();
-        
-        // Show enhanced inventory update notification with more details and links
-        if (response?.adminProduct && response?.clientProduct) {
-          toast.custom((t) => (
-            <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 divide-y divide-gray-200`}>
-              <div className="p-4 pb-3">
-                <div className="flex items-start">
-                  <div className="flex-shrink-0">
-                    <Check className="h-6 w-6 text-green-400" aria-hidden="true" />
-                  </div>
-                  <div className="ml-3 w-0 flex-1 pt-0.5">
-                    <p className="text-sm font-medium text-gray-900">Inventory Updated Successfully</p>
-                    <p className="mt-1 text-sm text-gray-500">
-                      The inventory has been updated based on the approved request.
-                    </p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="p-4">
-                <div className="flex">
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Admin Inventory</h4>
-                    <div className="bg-red-50 p-2 rounded-md border border-red-100 mb-2">
-                      <p className="text-xs font-medium text-red-700">
-                        {response.adminProduct.name}
-                      </p>
-                      <div className="mt-1 flex items-center">
-                        <ArrowDown size={14} className="text-red-500 mr-1" />
-                        <p className="text-sm font-semibold text-red-700">
-                          {response.adminProduct.previousStock} → {response.adminProduct.newStock} units
-                        </p>
-                      </div>
+        try {
+          console.log('Attempting to approve purchase request:', selectedRequest._id);
+          const response = await reliableApprovePurchaseRequest(selectedRequest._id as string);
+          
+          // Show success message with inventory update information
+          toast.success('Purchase request approved successfully');
+          
+          // Trigger inventory refresh for client components
+          triggerInventoryRefresh();
+          
+          // Show enhanced inventory update notification with more details and links
+          if (response?.adminProduct && response?.clientProduct) {
+            toast.custom((t) => (
+              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 divide-y divide-gray-200`}>
+                <div className="p-4 pb-3">
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0">
+                      <Check className="h-6 w-6 text-green-400" aria-hidden="true" />
                     </div>
-                    
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Client Inventory</h4>
-                    <div className="bg-green-50 p-2 rounded-md border border-green-100">
-                      <p className="text-xs font-medium text-green-700">
-                        {response.clientProduct.name}
-                      </p>
-                      <div className="mt-1 flex items-center">
-                        <ArrowUp size={14} className="text-green-500 mr-1" />
-                        <p className="text-sm font-semibold text-green-700">
-                          {response.clientProduct.isNew ? '0' : (response.clientProduct.stock - selectedRequest.quantity)} → {response.clientProduct.stock} units
-                        </p>
-                      </div>
-                      <p className="text-xs text-green-600 mt-1">
-                        {response.clientProduct.isNew 
-                          ? 'New product created in client inventory' 
-                          : 'Existing product updated in client inventory'}
+                    <div className="ml-3 w-0 flex-1 pt-0.5">
+                      <p className="text-sm font-medium text-gray-900">Inventory Updated Successfully</p>
+                      <p className="mt-1 text-sm text-gray-500">
+                        The inventory has been updated based on the approved request.
                       </p>
                     </div>
                   </div>
                 </div>
+                
+                <div className="p-4">
+                  <div className="flex">
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-2">Admin Inventory</h4>
+                      <div className="bg-red-50 p-2 rounded-md border border-red-100 mb-2">
+                        <p className="text-xs font-medium text-red-700">
+                          {response.adminProduct.name}
+                        </p>
+                        <div className="mt-1 flex items-center">
+                          <ArrowDown size={14} className="text-red-500 mr-1" />
+                          <p className="text-sm font-semibold text-red-700">
+                            {response.adminProduct.previousStock} → {response.adminProduct.newStock} units
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <h4 className="text-sm font-semibold text-gray-900 mb-2">Client Inventory</h4>
+                      <div className="bg-green-50 p-2 rounded-md border border-green-100">
+                        <p className="text-xs font-medium text-green-700">
+                          {response.clientProduct.name}
+                        </p>
+                        <div className="mt-1 flex items-center">
+                          <ArrowUp size={14} className="text-green-500 mr-1" />
+                          <p className="text-sm font-semibold text-green-700">
+                            {response.clientProduct.isNew ? '0' : (response.clientProduct.stock - selectedRequest.quantity)} → {response.clientProduct.stock} units
+                          </p>
+                        </div>
+                        <p className="text-xs text-green-600 mt-1">
+                          {response.clientProduct.isNew 
+                            ? 'New product created in client inventory' 
+                            : 'Existing product updated in client inventory'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="p-3 flex">
+                  <button
+                    type="button"
+                    onClick={() => toast.dismiss(t.id)}
+                    className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
-              
-              <div className="p-3 flex">
-                <button
-                  type="button"
-                  onClick={() => toast.dismiss(t.id)}
-                  className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ), { duration: 8000 });
+            ), { duration: 8000 });
+          } else {
+            console.warn('Approval successful but API response missing product details:', response);
+          }
+        } catch (approvalError: any) {
+          console.error('Error during purchase request approval:', approvalError);
+          
+          // Handle specific approval errors with better user messages
+          let errorMessage = approvalError.message || 'Failed to approve the purchase request';
+          
+          // Add more specific actions for different error types
+          if (errorMessage.includes('permission') || errorMessage.includes('403')) {
+            toast.error('You do not have permission to approve this request', {
+              duration: 5000,
+            });
+          } else if (errorMessage.includes('stock') || errorMessage.includes('inventory')) {
+            toast.error('Failed to update inventory during approval. Please try again.', {
+              duration: 5000,
+            });
+          } else {
+            toast.error(errorMessage, {
+              duration: 5000,
+            });
+          }
+          
+          // Close modal but don't clear selection if approval failed
+          setIsActionModalOpen(false);
+          setLoading(false);
+          return;
         }
       } else {
         // For rejection, use the reject API with rejection reason
-        await rejectPurchaseRequest(selectedRequest._id as string, actionNote);
-        toast.success('Purchase request rejected successfully');
+        try {
+          await rejectPurchaseRequest(selectedRequest._id as string, actionNote);
+          toast.success('Purchase request rejected successfully');
+        } catch (rejectionError: any) {
+          console.error('Error rejecting request:', rejectionError);
+          toast.error(rejectionError.message || 'Failed to reject the request');
+          
+          // Close modal but don't clear selection if rejection failed
+          setIsActionModalOpen(false);
+          setLoading(false);
+          return;
+        }
       }
       
       // Refresh data
@@ -344,8 +384,8 @@ const AdminPurchaseRequestsPage: React.FC = () => {
       setActionType(null);
       setActionNote('');
     } catch (err: any) {
-      console.error(`Error ${actionType}ing request:`, err);
-      toast.error(err.message || `Failed to ${actionType} the request`);
+      console.error(`General error in ${actionType} operation:`, err);
+      toast.error(err.message || `Failed to ${actionType} the request - please try again`);
     } finally {
       setLoading(false);
     }

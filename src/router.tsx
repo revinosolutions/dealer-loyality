@@ -38,7 +38,7 @@ const DealerCatalogPage = React.lazy(() => import('./pages/DealerCatalogPage'));
 const AdminProductsCatalogPage = React.lazy(() => import('./pages/AdminProductsCatalogPage'));
 const AdminPurchaseRequestsPage = React.lazy(() => import('./pages/AdminPurchaseRequestsPage'));
 const ClientPurchaseRequestsPage = React.lazy(() => import('./pages/ClientPurchaseRequestsPage'));
-const ClientInventoryPage = React.lazy(() => import('./pages/ClientInventoryPage'));
+const ClientProductsPage = React.lazy(() => import('./pages/ClientProductsPage.tsx'));
 
 // Protected layout with sidebar and header
 const ProtectedLayout = () => {
@@ -95,7 +95,7 @@ const AppRouter = () => {
           <Route path="dashboard/client-purchase-requests" element={<ClientPurchaseRequestsPage />} />
           
           {/* Client Inventory with Approved Stock */}
-          <Route path="dashboard/client-inventory" element={<ClientInventoryPage />} />
+          <Route path="dashboard/client-inventory" element={<ClientProductsPage />} />
           
           {/* Dealer Slots */}
           <Route path="dashboard/dealer-slots" element={<DealerSlotsPage />} />

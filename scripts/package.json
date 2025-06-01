@@ -1,0 +1,14 @@
+{
+  "name": "client-inventory-fix-scripts",
+  "version": "1.0.0",
+  "description": "Scripts to fix client inventory issues",
+  "type": "module",
+  "main": "fix-client-inventory.js",
+  "scripts": {
+    "fix-inventory": "node fix-client-inventory.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "mongoose": "^7.0.3"
+  }
+} 

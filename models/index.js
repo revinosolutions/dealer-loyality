@@ -12,6 +12,8 @@ import './Notification.js';
 import './DealerSlot.js';
 import './ClientOrder.js';
 import './PurchaseRequest.js';
+import './InventoryTransaction.js';
+import './LoyaltyPoints.js';
 
 // Export models - this ensures all models are loaded before the routes use them
 export default {

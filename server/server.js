@@ -34,7 +34,7 @@ import productsRoutes from './routes/products.js';
 import healthCheckRoutes from './routes/health-check.js';
 import clientRequestsRoutes from './routes/client-requests.js';
 import clientOnlyRoutes from './routes/client-only.js';
-import clientInventoryRoutes from './routes/client-inventory.js';
+import loyaltyRoutes from './routes/loyalty.js';
 
 // Config
 dotenv.config();
@@ -91,7 +91,7 @@ app.use('/api/products', productsRoutes);
 app.use('/api/health-check', healthCheckRoutes);
 app.use('/api/client-requests', clientRequestsRoutes);
 app.use('/api/client-only', clientOnlyRoutes);
-app.use('/api/client-inventory', clientInventoryRoutes);
+app.use('/api/loyalty', loyaltyRoutes);
 
 // Serve static assets in production
 if (process.env.NODE_ENV === 'production') {
